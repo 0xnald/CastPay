@@ -15,14 +15,115 @@ import {
   UserCheck
 } from "lucide-react";
 import Hls from "hls.js";
-import { GatewayClient } from "@circle-fin/x402-batching/client";
+import { GatewayClient, CHAIN_CONFIGS, SupportedChainName } from "@circle-fin/x402-batching/client";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { createPublicClient, http, formatUnits } from "viem";
+import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
 import { arcTestnet } from "viem/chains";
 
 const BACKEND_URL = "http://localhost:3001";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
 const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
+
+const GATEWAY_MINTER_ABI = [
+  {
+    name: "gatewayMint",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "attestationPayload", type: "bytes" },
+      { name: "signature", type: "bytes" }
+    ],
+    outputs: []
+  }
+] as const;
+
+const GATEWAY_WALLET_ABI = [
+  {
+    name: "depositFor",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "depositor", type: "address" },
+      { name: "value", type: "uint256" }
+    ],
+    outputs: []
+  }
+] as const;
+
+const padAddress = (addr: string) => {
+  return pad(addr.toLowerCase() as `0x${string}`, { size: 32 });
+};
+
+const createBurnIntent = (
+  fromConfig: any,
+  toConfig: any,
+  value: bigint,
+  depositor: string,
+  recipient: string,
+  maxFee: bigint
+) => {
+  const randomBytes = new Uint8Array(32);
+  window.crypto.getRandomValues(randomBytes);
+  const salt = "0x" + Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('') as `0x${string}`;
+
+  return {
+    maxBlockHeight: maxUint256,
+    maxFee,
+    spec: {
+      version: 1,
+      sourceDomain: fromConfig.domain,
+      destinationDomain: toConfig.domain,
+      sourceContract: padAddress(fromConfig.gatewayWallet),
+      destinationContract: padAddress(toConfig.gatewayMinter),
+      sourceToken: padAddress(fromConfig.usdc),
+      destinationToken: padAddress(toConfig.usdc),
+      sourceDepositor: padAddress(depositor),
+      destinationRecipient: padAddress(recipient),
+      sourceSigner: padAddress(depositor),
+      destinationCaller: padAddress(zeroAddress),
+      value,
+      salt,
+      hookData: "0x" as `0x${string}`
+    }
+  };
+};
+
+const switchNetwork = async (
+  chainId: number,
+  chainName: string,
+  rpcUrl: string,
+  nativeCurrency: any,
+  blockExplorer: string
+) => {
+  if (!(window as any).ethereum) return;
+  const chainIdHex = "0x" + chainId.toString(16);
+  try {
+    await (window as any).ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: chainIdHex }],
+    });
+  } catch (switchError: any) {
+    if (switchError.code === 4902) {
+      try {
+        await (window as any).ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [{
+            chainId: chainIdHex,
+            chainName,
+            rpcUrls: [rpcUrl],
+            nativeCurrency,
+            blockExplorerUrls: [blockExplorer],
+          }],
+        });
+      } catch (addError: any) {
+        throw new Error(`Failed to add network ${chainName}: ${addError.message}`);
+      }
+    } else {
+      throw switchError;
+    }
+  }
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"viewer" | "creator">("viewer");
@@ -32,6 +133,10 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [streamRate, setStreamRate] = useState(0.0001); // USDC per second
   const [backendStatus, setBackendStatus] = useState<"online" | "offline">("offline");
+  
+  // MetaMask Connection States
+  const [connectedAddress, setConnectedAddress] = useState<string>("");
+  const [connectedChainId, setConnectedChainId] = useState<number | null>(null);
 
   // Ephemeral Viewer Wallet States
   const [viewerKey, setViewerKey] = useState<string>(() => {
@@ -43,7 +148,6 @@ export default function App() {
   const [depositAmount, setDepositAmount] = useState("0.50");
   const [isDepositing, setIsDepositing] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
-  const [importKeyInput, setImportKeyInput] = useState("");
 
   const [creatorStats, setCreatorStats] = useState({
     activeViewers: 0,
@@ -63,8 +167,6 @@ export default function App() {
   const [withdrawChain, setWithdrawChain] = useState("arcTestnet");
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [withdrawAddress, setWithdrawAddress] = useState("");
-  const [regAddress, setRegAddress] = useState("");
-  const [regPrivateKey, setRegPrivateKey] = useState("");
   const [isRegisteringCreator, setIsRegisteringCreator] = useState(false);
 
   // Refs & Particle States
@@ -102,6 +204,38 @@ export default function App() {
     fetchBackendStats();
     const interval = setInterval(fetchBackendStats, 3000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Auto-connect MetaMask wallet if already authorized
+  useEffect(() => {
+    const checkMetaMaskConnected = async () => {
+      if (typeof window !== "undefined" && (window as any).ethereum) {
+        try {
+          const accounts = await (window as any).ethereum.request({ method: "eth_accounts" });
+          if (accounts && accounts.length > 0) {
+            setConnectedAddress(accounts[0]);
+            const chainIdHex = await (window as any).ethereum.request({ method: "eth_chainId" });
+            setConnectedChainId(parseInt(chainIdHex, 16));
+            
+            // Listen for changes
+            (window as any).ethereum.on("accountsChanged", (accs: string[]) => {
+              if (accs.length > 0) {
+                setConnectedAddress(accs[0]);
+              } else {
+                setConnectedAddress("");
+              }
+            });
+
+            (window as any).ethereum.on("chainChanged", (hexId: string) => {
+              setConnectedChainId(parseInt(hexId, 16));
+            });
+          }
+        } catch (e) {
+          console.warn("Failed to check MetaMask connection:", e);
+        }
+      }
+    };
+    checkMetaMaskConnected();
   }, []);
 
   // Fetch viewer balance periodically
@@ -269,21 +403,77 @@ export default function App() {
   };
 
   const handleDeposit = async () => {
-    if (!viewerKey || isDepositing) return;
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
+      return;
+    }
+    if (connectedChainId !== 5042002) {
+      await ensureArcNetwork();
+      return;
+    }
+    if (isDepositing || !depositAmount) return;
     setErrorMsg("");
     setSuccessMsg("");
     setIsDepositing(true);
     try {
-      const gateway = new GatewayClient({
-        chain: "arcTestnet",
-        privateKey: viewerKey as `0x${string}`,
+      const amountVal = parseUnits(depositAmount, 6);
+      const walletClient = createWalletClient({
+        account: connectedAddress as `0x${string}`,
+        chain: arcTestnet,
+        transport: custom((window as any).ethereum)
       });
-      console.log(`Depositing ${depositAmount} USDC to Gateway...`);
-      const result = await gateway.deposit(depositAmount);
-      setSuccessMsg(`Deposit successful! Tx: ${result.depositTxHash.slice(0, 12)}...`);
+      const publicClient = createPublicClient({
+        chain: arcTestnet,
+        transport: custom((window as any).ethereum)
+      });
+
+      // Check MetaMask USDC balance
+      const balance = await publicClient.readContract({
+        address: ARC_TESTNET_USDC,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [connectedAddress as `0x${string}`]
+      });
+
+      if (balance < amountVal) {
+        throw new Error(`Insufficient MetaMask USDC balance. Have: ${formatUnits(balance, 6)} USDC, Need: ${depositAmount} USDC`);
+      }
+
+      // Check Allowance
+      const gatewayWalletAddress = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
+      const allowance = await publicClient.readContract({
+        address: ARC_TESTNET_USDC,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [connectedAddress as `0x${string}`, gatewayWalletAddress]
+      });
+
+      if (allowance < amountVal) {
+        setSuccessMsg("Approving USDC spending in MetaMask...");
+        const approveTx = await walletClient.writeContract({
+          address: ARC_TESTNET_USDC,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [gatewayWalletAddress, amountVal]
+        });
+        setSuccessMsg(`Approval pending: ${approveTx.slice(0, 15)}...`);
+        await publicClient.waitForTransactionReceipt({ hash: approveTx });
+      }
+
+      setSuccessMsg("Depositing USDC into Gateway in MetaMask...");
+      const depositTx = await walletClient.writeContract({
+        address: gatewayWalletAddress,
+        abi: GATEWAY_WALLET_ABI,
+        functionName: "depositFor",
+        args: [ARC_TESTNET_USDC, viewerAddress as `0x${string}`, amountVal]
+      });
+      setSuccessMsg(`Deposit transaction submitted: ${depositTx.slice(0, 15)}...`);
+      await publicClient.waitForTransactionReceipt({ hash: depositTx });
+      setSuccessMsg(`Deposit successful! Tx: ${depositTx.slice(0, 15)}...`);
       fetchViewerBalances();
-    } catch (err) {
-      setErrorMsg(`Deposit failed: ${(err as Error).message}`);
+    } catch (err: any) {
+      console.error("Deposit failed:", err);
+      setErrorMsg(`Deposit failed: ${err.message || err.toString()}`);
     } finally {
       setIsDepositing(false);
     }
@@ -315,30 +505,161 @@ export default function App() {
   };
 
   const handleWithdraw = async () => {
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
+      return;
+    }
+    if (creatorStats.sellerAddress === "0x0000000000000000000000000000000000000000" || !creatorStats.sellerAddress) {
+      setErrorMsg("Creator address is not registered. Please register first.");
+      return;
+    }
+    if (connectedAddress.toLowerCase() !== creatorStats.sellerAddress.toLowerCase()) {
+      setErrorMsg(`Connected wallet (${connectedAddress.slice(0, 8)}...) does not match registered creator wallet (${creatorStats.sellerAddress.slice(0, 8)}...). Please switch accounts in MetaMask.`);
+      return;
+    }
     if (isWithdrawing) return;
     setErrorMsg("");
     setSuccessMsg("");
     setIsWithdrawing(true);
     try {
+      // 1. Ensure we are on Arc Testnet to initiate the burn intent signature
+      if (connectedChainId !== 5042002) {
+        setSuccessMsg("Switching to Arc Testnet to sign withdrawal...");
+        await ensureArcNetwork();
+        // Wait briefly for MetaMask state update
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      const withdrawAmountAtomic = parseUnits(withdrawAmount, 6);
+      const recipient = withdrawAddress || creatorStats.sellerAddress;
+      const maxFeeVal = parseUnits("2.01", 6); // default max fee 2.01 USDC
+
+      const fromConfig = CHAIN_CONFIGS.arcTestnet;
+      const toConfig = CHAIN_CONFIGS[withdrawChain as SupportedChainName];
+      if (!toConfig) {
+        throw new Error(`Unsupported destination chain: ${withdrawChain}`);
+      }
+
+      // 2. Construct the BurnIntent payload
+      const burnIntent = createBurnIntent(
+        fromConfig,
+        toConfig,
+        withdrawAmountAtomic,
+        creatorStats.sellerAddress,
+        recipient,
+        maxFeeVal
+      );
+
+      const walletClient = createWalletClient({
+        account: connectedAddress as `0x${string}`,
+        chain: arcTestnet,
+        transport: custom((window as any).ethereum)
+      });
+
+      // 3. Prompt user to sign EIP-712 BurnIntent typed data via MetaMask
+      setSuccessMsg("Please sign the burn intent authorization in MetaMask...");
+      const signature = await walletClient.signTypedData({
+        domain: { name: "GatewayWallet", version: "1" },
+        types: {
+          EIP712Domain: [
+            { name: "name", type: "string" },
+            { name: "version", type: "string" }
+          ],
+          TransferSpec: [
+            { name: "version", type: "uint32" },
+            { name: "sourceDomain", type: "uint32" },
+            { name: "destinationDomain", type: "uint32" },
+            { name: "sourceContract", type: "bytes32" },
+            { name: "destinationContract", type: "bytes32" },
+            { name: "sourceToken", type: "bytes32" },
+            { name: "destinationToken", type: "bytes32" },
+            { name: "sourceDepositor", type: "bytes32" },
+            { name: "destinationRecipient", type: "bytes32" },
+            { name: "sourceSigner", type: "bytes32" },
+            { name: "destinationCaller", type: "bytes32" },
+            { name: "value", type: "uint256" },
+            { name: "salt", type: "bytes32" },
+            { name: "hookData", type: "bytes" }
+          ],
+          BurnIntent: [
+            { name: "maxBlockHeight", type: "uint256" },
+            { name: "maxFee", type: "uint256" },
+            { name: "spec", type: "TransferSpec" }
+          ]
+        },
+        primaryType: "BurnIntent",
+        message: burnIntent
+      });
+
+      // 4. POST the signature to the backend sidecar (which proxies to Circle's transfer API)
+      setSuccessMsg("Submitting withdrawal signature to CastPay server...");
       const res = await fetch(`${BACKEND_URL}/api/withdraw`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount: withdrawAmount,
+          burnIntent,
+          signature,
           destinationChain: withdrawChain,
-          destinationAddress: withdrawAddress || undefined,
-        }),
+        }, (_, v) => typeof v === "bigint" ? v.toString() : v),
       });
-      if (res.ok) {
+
+      if (!res.ok) {
         const data = await res.json();
-        setSuccessMsg(`Withdrawal complete! Mint Tx Hash: ${data.txHash.slice(0, 15)}...`);
-        fetchBackendStats();
-      } else {
-        const data = await res.json();
-        setErrorMsg(`Withdrawal failed: ${data.error || data.details}`);
+        throw new Error(data.error || data.details || "Withdrawal failed at gateway proxy");
       }
-    } catch (err) {
-      setErrorMsg("Withdrawal request failed");
+
+      const withdrawData = await res.json();
+      const { attestation, circleSignature, withdrawalId } = withdrawData;
+
+      // 5. If destination chain is different, switch MetaMask to destination chain
+      const destChainId = toConfig.chain.id;
+      if (connectedChainId !== destChainId) {
+        setSuccessMsg(`Switching network to ${toConfig.chain.name} for claiming...`);
+        await switchNetwork(
+          destChainId,
+          toConfig.chain.name,
+          toConfig.rpcUrl || toConfig.chain.rpcUrls.default.http[0],
+          toConfig.chain.nativeCurrency || { name: "USDC", symbol: "USDC", decimals: 18 },
+          toConfig.chain.blockExplorers?.default?.url || ""
+        );
+        // Wait briefly for network switch to complete in MetaMask
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      // 6. Execute the gatewayMint contract write on destination chain via MetaMask
+      setSuccessMsg(`Submitting claim transaction on ${toConfig.chain.name}...`);
+      const destWallet = createWalletClient({
+        account: connectedAddress as `0x${string}`,
+        chain: toConfig.chain,
+        transport: custom((window as any).ethereum)
+      });
+      const destPublic = createPublicClient({
+        chain: toConfig.chain,
+        transport: custom((window as any).ethereum)
+      });
+
+      const mintTx = await destWallet.writeContract({
+        address: toConfig.gatewayMinter,
+        abi: GATEWAY_MINTER_ABI,
+        functionName: "gatewayMint",
+        args: [attestation, circleSignature]
+      });
+
+      setSuccessMsg(`Claim submitted: ${mintTx.slice(0, 15)}... Waiting for receipt...`);
+      await destPublic.waitForTransactionReceipt({ hash: mintTx });
+
+      // 7. Confirm withdrawal complete with the backend sidecar
+      await fetch(`${BACKEND_URL}/api/withdraw/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: withdrawalId, txHash: mintTx }),
+      });
+
+      setSuccessMsg(`Withdrawal complete and claimed! Tx: ${mintTx.slice(0, 15)}...`);
+      fetchBackendStats();
+    } catch (err: any) {
+      console.error("Withdrawal error:", err);
+      setErrorMsg(`Withdrawal failed: ${err.message || err.toString()}`);
     } finally {
       setIsWithdrawing(false);
     }
@@ -346,16 +667,8 @@ export default function App() {
 
   const handleRegisterCreator = async () => {
     if (isRegisteringCreator) return;
-    if (!regAddress) {
-      setErrorMsg("Creator wallet address is required.");
-      return;
-    }
-    if (!regAddress.startsWith("0x") || regAddress.length !== 42) {
-      setErrorMsg("Invalid EVM wallet address format.");
-      return;
-    }
-    if (regPrivateKey && (!regPrivateKey.startsWith("0x") || regPrivateKey.length !== 66)) {
-      setErrorMsg("Invalid private key format (must be 66 characters starting with 0x).");
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
       return;
     }
 
@@ -367,15 +680,12 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          address: regAddress,
-          privateKey: regPrivateKey || undefined,
+          address: connectedAddress,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         setSuccessMsg(`Creator wallet registered successfully! Address: ${data.sellerAddress}`);
-        setRegAddress("");
-        setRegPrivateKey("");
         fetchBackendStats();
       } else {
         const data = await res.json();
@@ -388,14 +698,84 @@ export default function App() {
     }
   };
 
+  const connectWallet = async () => {
+    if (typeof window === "undefined" || !(window as any).ethereum) {
+      setErrorMsg("MetaMask or compatible Web3 wallet not found in browser.");
+      return;
+    }
+    try {
+      setErrorMsg("");
+      const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
+      if (accounts && accounts.length > 0) {
+        setConnectedAddress(accounts[0]);
+        
+        // Fetch chainId
+        const chainIdHex = await (window as any).ethereum.request({ method: "eth_chainId" });
+        const chainId = parseInt(chainIdHex, 16);
+        setConnectedChainId(chainId);
+        
+        setSuccessMsg(`Wallet connected: ${accounts[0]}`);
+
+        // Listen for changes
+        (window as any).ethereum.on("accountsChanged", (accs: string[]) => {
+          if (accs.length > 0) {
+            setConnectedAddress(accs[0]);
+          } else {
+            setConnectedAddress("");
+          }
+        });
+
+        (window as any).ethereum.on("chainChanged", (hexId: string) => {
+          setConnectedChainId(parseInt(hexId, 16));
+        });
+
+        // Ensure we are on Arc Testnet
+        if (chainId !== 5042002) {
+          await ensureArcNetwork();
+        }
+      }
+    } catch (err: any) {
+      setErrorMsg(`Failed to connect wallet: ${err.message}`);
+    }
+  };
+
+  const ensureArcNetwork = async () => {
+    if (!(window as any).ethereum) return;
+    try {
+      await (window as any).ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x4ceca2" }], // 5042002 in hex is 0x4ceca2
+      });
+    } catch (switchError: any) {
+      if (switchError.code === 4902) {
+        try {
+          await (window as any).ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: "0x4ceca2",
+              chainName: "Arc Testnet",
+              rpcUrls: ["https://rpc.testnet.arc.network"],
+              nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+              blockExplorerUrls: ["https://testnet.arcscan.app"],
+            }],
+          });
+        } catch (addError: any) {
+          setErrorMsg(`Please manually add the Arc Testnet to your MetaMask: ${addError.message}`);
+        }
+      } else {
+        setErrorMsg(`Failed to switch network: ${switchError.message}`);
+      }
+    }
+  };
+
   const handleFaucetFund = async () => {
     if (isFunding) return;
     setErrorMsg("");
     setSuccessMsg("");
     setIsFunding(true);
     
-    // Direct link instruction
-    setSuccessMsg(`Please fund address: ${viewerAddress} using the Circle Faucet!`);
+    const target = connectedAddress || viewerAddress;
+    setSuccessMsg(`Please fund address: ${target} using the Circle Faucet!`);
     window.open("https://faucet.circle.com/", "_blank");
     setIsFunding(false);
   };
@@ -406,31 +786,6 @@ export default function App() {
       setViewerKey(newKey);
       localStorage.setItem("castpay_viewer_key", newKey);
       setSuccessMsg("New ephemeral wallet generated.");
-    }
-  };
-
-  const handleImportPrivateKey = () => {
-    let key = importKeyInput.trim();
-    if (!key) {
-      setErrorMsg("Please enter a private key.");
-      return;
-    }
-    if (!key.startsWith("0x")) {
-      key = "0x" + key;
-    }
-    if (key.length !== 66) {
-      setErrorMsg("Invalid private key length. Must be 66 characters (including 0x).");
-      return;
-    }
-    try {
-      const account = privateKeyToAccount(key as `0x${string}`);
-      setViewerKey(key);
-      localStorage.setItem("castpay_viewer_key", key);
-      setImportKeyInput("");
-      setSuccessMsg(`Wallet imported successfully: ${account.address}`);
-      setErrorMsg("");
-    } catch (e) {
-      setErrorMsg("Invalid private key format. Make sure it's a valid hex string.");
     }
   };
 
@@ -526,6 +881,24 @@ export default function App() {
               </span>
             )}
             
+            {connectedAddress ? (
+              <button 
+                onClick={connectWallet}
+                className="text-xs border border-gold-muted hover:border-gold-bright px-3 py-1.5 rounded-lg font-mono text-gold-bright flex items-center gap-1.5 transition-all bg-[#0f0e0b]"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80]"></span>
+                {connectedAddress.slice(0, 6)}...{connectedAddress.slice(-4)}
+              </button>
+            ) : (
+              <button 
+                onClick={connectWallet}
+                className="text-xs btn-gold px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+              >
+                <Wallet className="w-3.5 h-3.5" />
+                Connect Wallet
+              </button>
+            )}
+
             <div className="flex p-0.5 bg-[#14120f] border border-gold-muted rounded-lg">
               <button 
                 onClick={() => setActiveTab("viewer")}
@@ -701,52 +1074,51 @@ export default function App() {
                   <button 
                     onClick={handleResetWallet}
                     className="text-[10px] text-secondary hover:text-gold-accent flex items-center gap-1"
-                    title="Generate New Private Key"
+                    title="Generate New Session Key"
                   >
                     <RefreshCw className="w-3 h-3" />
-                    Reset
+                    Reset Key
                   </button>
                 </div>
 
+                {/* MetaMask connection prompt if not connected */}
+                {!connectedAddress && (
+                  <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 text-center mb-4">
+                    <p className="text-xs text-amber-300 mb-3">Connect MetaMask to deposit USDC into the Gateway.</p>
+                    <button onClick={connectWallet} className="btn-gold text-xs px-4 py-2 mx-auto flex items-center gap-2">
+                      <Wallet className="w-4 h-4" />
+                      Connect MetaMask
+                    </button>
+                  </div>
+                )}
+
                 {/* Balances Card */}
                 <div className="bg-[#0f0e0b] border border-gold-muted rounded-xl p-4 flex flex-col gap-4 mb-4">
+                  {connectedAddress && (
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block">MetaMask Wallet (Source)</label>
+                      <div className="font-mono text-xs text-gold-bright truncate mt-1 bg-[#14120f] px-2.5 py-1.5 rounded border border-gold-muted/10">
+                        {connectedAddress}
+                      </div>
+                    </div>
+                  )}
+
                   <div>
-                    <label className="text-[10px] uppercase font-semibold text-secondary block">EVM Wallet Address</label>
-                    <div className="font-mono text-xs text-gold-bright truncate mt-1 bg-[#14120f] px-2.5 py-1.5 rounded border border-gold-muted/10">
+                    <label className="text-[10px] uppercase font-semibold text-secondary block">Session Address (Target)</label>
+                    <div className="font-mono text-xs text-secondary truncate mt-1 bg-[#14120f] px-2.5 py-1.5 rounded border border-gold-muted/10">
                       {viewerAddress || "Generating..."}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <span className="text-[10px] uppercase font-semibold text-secondary block">On-chain Balance</span>
-                      <strong className="text-lg text-primary">{viewerWalletBalance} <span className="text-xs text-secondary font-normal">USDC</span></strong>
+                      <span className="text-[10px] uppercase font-semibold text-secondary block">Session On-chain</span>
+                      <strong className="text-lg text-secondary">{viewerWalletBalance} <span className="text-xs text-secondary font-normal">USDC</span></strong>
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase font-semibold text-secondary block">Circle Gateway</span>
+                      <span className="text-[10px] uppercase font-semibold text-secondary block">Session Gateway</span>
                       <strong className="text-lg text-gold-accent">{viewerGatewayBalance} <span className="text-xs text-secondary font-normal">USDC</span></strong>
                     </div>
-                  </div>
-                </div>
-
-                {/* Import Private Key */}
-                <div className="mb-4">
-                  <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Import Private Key</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="password"
-                      value={importKeyInput}
-                      onChange={(e) => setImportKeyInput(e.target.value)}
-                      className="input-field text-xs"
-                      placeholder="0x... (64 hex characters)"
-                    />
-                    <button
-                      onClick={handleImportPrivateKey}
-                      className="btn-gold px-4 text-xs font-semibold"
-                      style={{ padding: '8px 16px' }}
-                    >
-                      Import
-                    </button>
                   </div>
                 </div>
 
@@ -755,7 +1127,7 @@ export default function App() {
                   onClick={handleFaucetFund}
                   className="w-full btn-outline text-xs justify-center mb-6 py-2.5"
                 >
-                  Fund Wallet via Circle Faucet
+                  Fund MetaMask/Session via Faucet
                 </button>
 
                 {/* Deposit action */}
@@ -783,7 +1155,7 @@ export default function App() {
                     </button>
                   </div>
                   <p className="text-[10px] text-secondary mt-1.5 leading-relaxed">
-                    Gateway deposits batch off-chain signed messages, reducing gas costs significantly for pay-per-second flows.
+                    MetaMask deposits USDC directly to the session wallet's Gateway balance. High-frequency micropayments are signed popup-free from the session key.
                   </p>
                 </div>
               </div>
@@ -792,7 +1164,8 @@ export default function App() {
               <div className="glass-panel p-6 bg-[#0a0907]">
                 <h4 className="text-sm uppercase font-semibold text-gold-accent mb-2">Instructions</h4>
                 <ol className="text-xs text-secondary list-decimal list-inside space-y-2">
-                  <li>Fund the viewer wallet address above using the Circle Faucet on Arc Testnet.</li>
+                  <li>Connect MetaMask and switch to Arc Testnet.</li>
+                  <li>Fund your connected address using the Circle Faucet button above.</li>
                   <li>Deposit some USDC (e.g. 0.5 USDC) into the Circle Gateway.</li>
                   <li>Click "Pay & Watch" to stream the live Owncast video and verify live micropayments.</li>
                 </ol>
@@ -910,45 +1283,43 @@ export default function App() {
                 </h3>
                 
                 <div className="flex flex-col gap-4">
-                  <div>
-                    <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Creator EVM Address</label>
-                    <input 
-                      type="text"
-                      value={regAddress}
-                      onChange={(e) => setRegAddress(e.target.value)}
-                      className="input-field text-xs"
-                      placeholder="0x... (42 characters)"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Creator Private Key (Optional - for withdrawals)</label>
-                    <input 
-                      type="password"
-                      value={regPrivateKey}
-                      onChange={(e) => setRegPrivateKey(e.target.value)}
-                      className="input-field text-xs"
-                      placeholder="0x... (66 characters)"
-                    />
-                  </div>
-
-                  <button
-                    onClick={handleRegisterCreator}
-                    disabled={isRegisteringCreator || !regAddress}
-                    className="w-full btn-gold text-xs justify-center py-2.5 mt-2"
-                  >
-                    {isRegisteringCreator ? (
-                      <>
-                        <RefreshCw className="w-4.5 h-4.5 animate-spin" />
-                        Registering...
-                      </>
-                    ) : (
-                      <>
-                        <UserCheck className="w-4.5 h-4.5" />
-                        Register Creator Profile
-                      </>
-                    )}
-                  </button>
+                  {connectedAddress ? (
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Connected MetaMask Wallet</label>
+                      <div className="font-mono text-sm text-gold-bright truncate bg-[#0f0e0b] px-2.5 py-1.5 rounded border border-gold-muted/10">
+                        {connectedAddress}
+                      </div>
+                      
+                      <button
+                        onClick={handleRegisterCreator}
+                        disabled={isRegisteringCreator}
+                        className="w-full btn-gold text-xs justify-center py-2.5 mt-4"
+                      >
+                        {isRegisteringCreator ? (
+                          <>
+                            <RefreshCw className="w-4.5 h-4.5 animate-spin" />
+                            Registering...
+                          </>
+                        ) : (
+                          <>
+                            <UserCheck className="w-4.5 h-4.5" />
+                            Register Connected Wallet as Creator
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4">
+                      <p className="text-xs text-secondary mb-3">Please connect your MetaMask wallet to register as a Creator.</p>
+                      <button
+                        onClick={connectWallet}
+                        className="btn-gold text-xs px-4 py-2 mx-auto flex items-center gap-2"
+                      >
+                        <Wallet className="w-4 h-4" />
+                        Connect MetaMask
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
