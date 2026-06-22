@@ -1,0 +1,23 @@
+{
+  "name": "castpay-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CastPay - Owncast Pay-Per-Second Portal & Creator Console",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev --workspace=castpay-backend",
+    "dev:frontend": "npm run dev --workspace=castpay-frontend",
+    "build": "npm run build --workspaces",
+    "clean": "npm run clean --workspaces"
+  },
+  "dependencies": {
+    "@circle-fin/x402-batching": "^2.0.4",
+    "@x402/core": "^2.6.0",
+    "@x402/evm": "^2.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
