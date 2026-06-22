@@ -25,8 +25,8 @@ const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
 const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
 const ARC_TESTNET_DOMAIN = 26;
 
-const sellerAddress = process.env.SELLER_ADDRESS as `0x${string}`;
-const sellerPrivateKey = process.env.SELLER_PRIVATE_KEY as `0x${string}`;
+let sellerAddress = process.env.SELLER_ADDRESS as `0x${string}`;
+let sellerPrivateKey = process.env.SELLER_PRIVATE_KEY as `0x${string}` | undefined;
 
 if (!sellerAddress || !sellerPrivateKey) {
   console.warn("WARNING: SELLER_ADDRESS and SELLER_PRIVATE_KEY must be configured in .env.local");
@@ -182,6 +182,30 @@ app.post("/api/configure", (req, res) => {
   currentRatePerSecond = rate;
   console.log(`[CastPay] Stream rate updated to: ${currentRatePerSecond} USDC/second`);
   res.json({ success: true, rate: currentRatePerSecond });
+});
+
+// Endpoint: register creator profile/wallet dynamically
+app.post("/api/register", (req, res) => {
+  const { address, privateKey } = req.body;
+  if (!address) {
+    return res.status(400).json({ error: "address is required" });
+  }
+  if (!address.startsWith("0x") || address.length !== 42) {
+    return res.status(400).json({ error: "Invalid EVM address format" });
+  }
+  
+  sellerAddress = address as `0x${string}`;
+  if (privateKey) {
+    if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
+      return res.status(400).json({ error: "Invalid private key format (must be 66 characters starting with 0x)" });
+    }
+    sellerPrivateKey = privateKey as `0x${string}`;
+  } else {
+    sellerPrivateKey = undefined; // clear private key if not provided (read-only mode)
+  }
+
+  console.log(`[CastPay] Creator profile registered: ${sellerAddress} (Private Key: ${sellerPrivateKey ? "Configured" : "None"})`);
+  res.json({ success: true, sellerAddress, hasPrivateKey: !!sellerPrivateKey });
 });
 
 // Endpoint: withdraw funds from Circle Gateway

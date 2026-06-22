@@ -11,7 +11,8 @@ import {
   Plus, 
   TrendingUp, 
   ExternalLink,
-  Activity
+  Activity,
+  UserCheck
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
@@ -42,6 +43,7 @@ export default function App() {
   const [depositAmount, setDepositAmount] = useState("0.50");
   const [isDepositing, setIsDepositing] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
+  const [importKeyInput, setImportKeyInput] = useState("");
 
   const [creatorStats, setCreatorStats] = useState({
     activeViewers: 0,
@@ -61,6 +63,9 @@ export default function App() {
   const [withdrawChain, setWithdrawChain] = useState("arcTestnet");
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [withdrawAddress, setWithdrawAddress] = useState("");
+  const [regAddress, setRegAddress] = useState("");
+  const [regPrivateKey, setRegPrivateKey] = useState("");
+  const [isRegisteringCreator, setIsRegisteringCreator] = useState(false);
 
   // Refs & Particle States
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -339,6 +344,50 @@ export default function App() {
     }
   };
 
+  const handleRegisterCreator = async () => {
+    if (isRegisteringCreator) return;
+    if (!regAddress) {
+      setErrorMsg("Creator wallet address is required.");
+      return;
+    }
+    if (!regAddress.startsWith("0x") || regAddress.length !== 42) {
+      setErrorMsg("Invalid EVM wallet address format.");
+      return;
+    }
+    if (regPrivateKey && (!regPrivateKey.startsWith("0x") || regPrivateKey.length !== 66)) {
+      setErrorMsg("Invalid private key format (must be 66 characters starting with 0x).");
+      return;
+    }
+
+    setIsRegisteringCreator(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: regAddress,
+          privateKey: regPrivateKey || undefined,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSuccessMsg(`Creator wallet registered successfully! Address: ${data.sellerAddress}`);
+        setRegAddress("");
+        setRegPrivateKey("");
+        fetchBackendStats();
+      } else {
+        const data = await res.json();
+        setErrorMsg(`Creator registration failed: ${data.error}`);
+      }
+    } catch (e) {
+      setErrorMsg("Creator registration request failed.");
+    } finally {
+      setIsRegisteringCreator(false);
+    }
+  };
+
   const handleFaucetFund = async () => {
     if (isFunding) return;
     setErrorMsg("");
@@ -357,6 +406,31 @@ export default function App() {
       setViewerKey(newKey);
       localStorage.setItem("castpay_viewer_key", newKey);
       setSuccessMsg("New ephemeral wallet generated.");
+    }
+  };
+
+  const handleImportPrivateKey = () => {
+    let key = importKeyInput.trim();
+    if (!key) {
+      setErrorMsg("Please enter a private key.");
+      return;
+    }
+    if (!key.startsWith("0x")) {
+      key = "0x" + key;
+    }
+    if (key.length !== 66) {
+      setErrorMsg("Invalid private key length. Must be 66 characters (including 0x).");
+      return;
+    }
+    try {
+      const account = privateKeyToAccount(key as `0x${string}`);
+      setViewerKey(key);
+      localStorage.setItem("castpay_viewer_key", key);
+      setImportKeyInput("");
+      setSuccessMsg(`Wallet imported successfully: ${account.address}`);
+      setErrorMsg("");
+    } catch (e) {
+      setErrorMsg("Invalid private key format. Make sure it's a valid hex string.");
     }
   };
 
@@ -655,6 +729,27 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Import Private Key */}
+                <div className="mb-4">
+                  <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Import Private Key</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="password"
+                      value={importKeyInput}
+                      onChange={(e) => setImportKeyInput(e.target.value)}
+                      className="input-field text-xs"
+                      placeholder="0x... (64 hex characters)"
+                    />
+                    <button
+                      onClick={handleImportPrivateKey}
+                      className="btn-gold px-4 text-xs font-semibold"
+                      style={{ padding: '8px 16px' }}
+                    >
+                      Import
+                    </button>
+                  </div>
+                </div>
+
                 {/* Funding help action */}
                 <button
                   onClick={handleFaucetFund}
@@ -806,7 +901,57 @@ export default function App() {
 
             {/* Right Side: Creator Configuration & Withdrawals */}
             <div className="flex flex-col gap-6">
-              
+
+              {/* Creator Wallet Registration card */}
+              <div className="glass-panel p-6">
+                <h3 className="text-xl mb-4 border-b border-gold-muted pb-3 flex items-center gap-2">
+                  <UserCheck className="w-4.5 h-4.5 text-gold-accent" />
+                  Register Creator Wallet
+                </h3>
+                
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Creator EVM Address</label>
+                    <input 
+                      type="text"
+                      value={regAddress}
+                      onChange={(e) => setRegAddress(e.target.value)}
+                      className="input-field text-xs"
+                      placeholder="0x... (42 characters)"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Creator Private Key (Optional - for withdrawals)</label>
+                    <input 
+                      type="password"
+                      value={regPrivateKey}
+                      onChange={(e) => setRegPrivateKey(e.target.value)}
+                      className="input-field text-xs"
+                      placeholder="0x... (66 characters)"
+                    />
+                  </div>
+
+                  <button
+                    onClick={handleRegisterCreator}
+                    disabled={isRegisteringCreator || !regAddress}
+                    className="w-full btn-gold text-xs justify-center py-2.5 mt-2"
+                  >
+                    {isRegisteringCreator ? (
+                      <>
+                        <RefreshCw className="w-4.5 h-4.5 animate-spin" />
+                        Registering...
+                      </>
+                    ) : (
+                      <>
+                        <UserCheck className="w-4.5 h-4.5" />
+                        Register Creator Profile
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
               {/* Creator Settings card */}
               <div className="glass-panel p-6">
                 <h3 className="text-xl mb-4 border-b border-gold-muted pb-3 flex items-center gap-2">
