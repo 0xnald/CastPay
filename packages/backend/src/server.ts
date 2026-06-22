@@ -186,7 +186,7 @@ app.post("/api/configure", (req, res) => {
 
 // Endpoint: register creator profile/wallet dynamically
 app.post("/api/register", (req, res) => {
-  const { address, privateKey } = req.body;
+  const { address } = req.body;
   if (!address) {
     return res.status(400).json({ error: "address is required" });
   }
@@ -195,66 +195,63 @@ app.post("/api/register", (req, res) => {
   }
   
   sellerAddress = address as `0x${string}`;
-  if (privateKey) {
-    if (!privateKey.startsWith("0x") || privateKey.length !== 66) {
-      return res.status(400).json({ error: "Invalid private key format (must be 66 characters starting with 0x)" });
-    }
-    sellerPrivateKey = privateKey as `0x${string}`;
-  } else {
-    sellerPrivateKey = undefined; // clear private key if not provided (read-only mode)
-  }
-
-  console.log(`[CastPay] Creator profile registered: ${sellerAddress} (Private Key: ${sellerPrivateKey ? "Configured" : "None"})`);
-  res.json({ success: true, sellerAddress, hasPrivateKey: !!sellerPrivateKey });
+  console.log(`[CastPay] Creator profile registered: ${sellerAddress}`);
+  res.json({ success: true, sellerAddress });
 });
 
 // Endpoint: withdraw funds from Circle Gateway
 app.post("/api/withdraw", async (req, res) => {
-  const { amount, destinationChain, destinationAddress } = req.body;
-  if (!amount || !destinationChain) {
-    return res.status(400).json({ error: "amount and destinationChain are required" });
-  }
-
-  if (!sellerPrivateKey) {
-    return res.status(500).json({ error: "SELLER_PRIVATE_KEY not configured" });
+  const { burnIntent, signature, destinationChain } = req.body;
+  if (!burnIntent || !signature || !destinationChain) {
+    return res.status(400).json({ error: "burnIntent, signature, and destinationChain are required" });
   }
 
   const withdrawalId = `w_${Date.now()}`;
-  const targetAddress = destinationAddress || sellerAddress;
+  const spec = burnIntent.spec;
+  const amountAtomic = spec.value;
+  const recipientBytes32 = spec.destinationRecipient;
+  const recipient = "0x" + recipientBytes32.slice(-40); // extract address from 32-byte pad
+  
+  const amountFormatted = (parseFloat(amountAtomic) / 1_000_000).toFixed(6);
 
   withdrawals.push({
     id: withdrawalId,
-    amount,
+    amount: amountFormatted,
     destinationChain,
-    destinationAddress: targetAddress,
+    destinationAddress: recipient,
     status: "submitted",
     txHash: null,
     timestamp: new Date().toISOString(),
   });
 
   try {
-    const gateway = new GatewayClient({
-      chain: "arcTestnet",
-      privateKey: sellerPrivateKey,
+    const GATEWAY_API_TESTNET = "https://gateway-api-testnet.circle.com/v1";
+    
+    // Proxy the pre-signed BurnIntent request to Circle Gateway API
+    const response = await fetch(`${GATEWAY_API_TESTNET}/transfer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        [{ burnIntent, signature }],
+        (_, v) => typeof v === "bigint" ? v.toString() : v
+      )
     });
 
-    const result = await gateway.withdraw(amount, {
-      chain: destinationChain as any,
-      recipient: targetAddress as `0x${string}`,
-    });
-
-    const idx = withdrawals.findIndex(w => w.id === withdrawalId);
-    if (idx !== -1) {
-      withdrawals[idx].status = "confirmed";
-      withdrawals[idx].txHash = result.mintTxHash;
+    const result = await response.json();
+    if (!response.ok || result.success === false || result.error || !result.attestation || !result.signature) {
+      throw new Error(
+        `Circle Gateway API error: ${result.message || result.error || JSON.stringify(result)}`
+      );
     }
 
     res.json({
       success: true,
-      txHash: result.mintTxHash,
-      amount,
+      attestation: result.attestation,
+      circleSignature: result.signature,
+      amount: amountFormatted,
       destinationChain,
-      recipient: targetAddress,
+      recipient,
+      withdrawalId,
     });
   } catch (error) {
     console.error("Withdrawal error:", error);
@@ -264,6 +261,22 @@ app.post("/api/withdraw", async (req, res) => {
     }
     res.status(500).json({ error: "Withdrawal failed", details: String(error) });
   }
+});
+
+// Endpoint: confirm complete withdrawal mint tx hash
+app.post("/api/withdraw/confirm", (req, res) => {
+  const { id, txHash } = req.body;
+  if (!id || !txHash) {
+    return res.status(400).json({ error: "id and txHash are required" });
+  }
+  const idx = withdrawals.findIndex(w => w.id === id);
+  if (idx !== -1) {
+    withdrawals[idx].status = "confirmed";
+    withdrawals[idx].txHash = txHash;
+    console.log(`[CastPay] Withdrawal ${id} confirmed with tx: ${txHash}`);
+    return res.json({ success: true });
+  }
+  res.status(404).json({ error: "Withdrawal not found" });
 });
 
 // Endpoint: Heartbeat payment receiver (conforms to x402 specification)
