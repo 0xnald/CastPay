@@ -144,6 +144,15 @@ app.get("/api/stats", async (req, res) => {
   try {
     const activeViewers = getActiveViewerCount();
     const walletBalance = sellerAddress ? await getWalletUsdcBalance(sellerAddress) : "0.00";
+    let gasBalance = "0.00";
+    if (sellerAddress) {
+      try {
+        const balance = await publicClient.getBalance({ address: sellerAddress });
+        gasBalance = formatUnits(balance, 18);
+      } catch (err) {
+        console.error("Failed to fetch seller gas balance:", err);
+      }
+    }
     const gateway = sellerAddress ? await getGatewayBalances(sellerAddress) : { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" };
 
     const totalReceived = heartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0).toFixed(6);
@@ -154,6 +163,7 @@ app.get("/api/stats", async (req, res) => {
       rate: currentRatePerSecond,
       sellerAddress: sellerAddress || "0x0000000000000000000000000000000000000000",
       walletBalance,
+      gasBalance,
       gateway,
       heartbeats: heartbeats.slice(-30).reverse(), // last 30 heartbeats
       withdrawals: withdrawals.slice(-20).reverse(), // last 20 withdrawals

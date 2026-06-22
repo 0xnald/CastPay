@@ -43,13 +43,13 @@ export default function App() {
   const [isDepositing, setIsDepositing] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
 
-  // Creator Console States
   const [creatorStats, setCreatorStats] = useState({
     activeViewers: 0,
     totalReceived: "0.000000",
     rate: 0.0001,
     sellerAddress: "0x0000000000000000000000000000000000000000",
     walletBalance: "0.00",
+    gasBalance: "0.00",
     gateway: { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" },
     heartbeats: [] as any[],
     withdrawals: [] as any[],
@@ -817,9 +817,33 @@ export default function App() {
                 {/* Creator Address Display */}
                 <div className="mb-4">
                   <label className="text-[10px] uppercase font-semibold text-secondary block">Creator Wallet (Receives Funds)</label>
-                  <div className="font-mono text-[10px] text-secondary truncate mt-1 bg-[#0f0e0b] p-2 rounded border border-gold-muted/10">
+                  <div className="font-mono text-[10px] text-secondary truncate mt-1 bg-[#0f0e0b] p-2 rounded border border-gold-muted/10 mb-2">
                     {creatorStats.sellerAddress}
                   </div>
+                  
+                  <div className="flex justify-between items-center text-xs mt-2 bg-[#0f0e0b]/50 p-2 rounded border border-gold-muted/10">
+                    <span className="text-secondary font-medium">Creator Gas Balance:</span>
+                    <strong className={parseFloat(creatorStats.gasBalance) < 0.005 ? "text-[#f87171] font-mono" : "text-[#4ade80] font-mono"}>
+                      {parseFloat(creatorStats.gasBalance).toFixed(4)} USDC
+                    </strong>
+                  </div>
+                  
+                  {parseFloat(creatorStats.gasBalance) < 0.005 && (
+                    <div className="mt-2.5 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 leading-normal">
+                      ⚠️ Creator has insufficient gas for withdrawals. Please use the button below to fund the creator wallet.
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      setSuccessMsg(`Please fund address: ${creatorStats.sellerAddress} using the Circle Faucet!`);
+                      window.open("https://faucet.circle.com/", "_blank");
+                    }}
+                    className="w-full btn-outline text-[10px] justify-center py-1.5 mt-2.5"
+                    style={{ fontSize: '10px', padding: '6px 12px' }}
+                  >
+                    Fund Creator Gas via Faucet
+                  </button>
                 </div>
 
                 {/* Rate setup */}
