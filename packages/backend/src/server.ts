@@ -609,12 +609,19 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
   // Resolve base upstream URL
   const lastSlash = stream.streamUrl.lastIndexOf("/");
   const baseUrl = stream.streamUrl.substring(0, lastSlash + 1);
-  const targetUrl = baseUrl + filePath;
+  const creatorFilename = stream.streamUrl.substring(lastSlash + 1);
 
-  const cacheKey = `${creatorAddress.toLowerCase()}_${filePath}`;
+  let resolvedFilePath = filePath;
+  // If the player requests index.m3u8, map it to the creator's actual playlist filename (e.g. stream.m3u8)
+  if (filePath === "index.m3u8") {
+    resolvedFilePath = creatorFilename;
+  }
+
+  const targetUrl = baseUrl + resolvedFilePath;
+  const cacheKey = `${creatorAddress.toLowerCase()}_${resolvedFilePath}`;
 
   // 1. If it's a playlist file (.m3u8), check playlist cache first
-  if (filePath.endsWith(".m3u8")) {
+  if (resolvedFilePath.endsWith(".m3u8")) {
     const cached = playlistCache.get(cacheKey);
     const nowMs = Date.now();
 
@@ -664,7 +671,7 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
     // Set CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
 
-    if (filePath.endsWith(".m3u8")) {
+    if (resolvedFilePath.endsWith(".m3u8")) {
       const text = await upstreamRes.text();
       
       // Cache the raw playlist
@@ -699,7 +706,7 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
       res.send(nodeBuffer);
     }
   } catch (err) {
-    console.error(`[CastPay Proxy] Error proxying ${filePath}:`, err);
+    console.error(`[CastPay Proxy] Error proxying ${resolvedFilePath}:`, err);
     res.status(500).send("Stream proxy error");
   }
 });
