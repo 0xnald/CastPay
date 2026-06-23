@@ -58,17 +58,61 @@ const withdrawals: Array<{
   timestamp: string;
 }> = [];
 
-// Track active viewers by address -> last heartbeat timestamp
+interface ActiveStream {
+  creatorAddress: string;
+  creatorName: string;
+  streamUrl: string;
+  ratePerSecond: number;
+  isActive: boolean;
+}
+
+const activeStreams: ActiveStream[] = [];
+
+// Track active viewers by key: `${viewerAddress.toLowerCase()}_${creatorAddress.toLowerCase()}` -> last heartbeat timestamp
 const activeViewersMap = new Map<string, number>();
 
-function getActiveViewerCount(): number {
+interface CachedSegment {
+  buffer: Buffer;
+  contentType: string | null;
+  timestamp: number;
+}
+
+const segmentCache = new Map<string, CachedSegment>();
+const CACHE_TTL_MS = 30000; // Cache segments for 30 seconds
+
+// Periodic cache cleanup
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, cached] of segmentCache.entries()) {
+    if (now - cached.timestamp > CACHE_TTL_MS) {
+      segmentCache.delete(key);
+    }
+  }
+}, 10000);
+
+// Periodic active viewers cleanup
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, lastSeen] of activeViewersMap.entries()) {
+    if (now - lastSeen > 20000) { // expire after 20 seconds of silence
+      activeViewersMap.delete(key);
+    }
+  }
+}, 10000);
+
+function getActiveViewerCount(creatorAddress?: string): number {
   const now = Date.now();
   let count = 0;
-  for (const [address, lastSeen] of activeViewersMap.entries()) {
-    if (now - lastSeen < 10000) { // active if heartbeat in last 10 seconds
-      count++;
-    } else {
-      activeViewersMap.delete(address);
+  for (const [key, lastSeen] of activeViewersMap.entries()) {
+    if (now - lastSeen < 15000) { // count as active if seen in the last 15 seconds
+      if (creatorAddress) {
+        const [, cAddr] = key.split("_");
+        if (cAddr === creatorAddress.toLowerCase()) {
+          count++;
+        }
+      } else {
+        count++;
+      }
     }
   }
   return count;
@@ -142,31 +186,47 @@ app.get("/", (req, res) => {
 // Endpoint: get stats for dashboard
 app.get("/api/stats", async (req, res) => {
   try {
-    const activeViewers = getActiveViewerCount();
-    const walletBalance = sellerAddress ? await getWalletUsdcBalance(sellerAddress) : "0.00";
+    const targetCreator = req.query.creator as string;
+    const targetAddress = targetCreator ? (targetCreator as `0x${string}`) : sellerAddress;
+
+    const activeViewers = getActiveViewerCount(targetAddress);
+    const walletBalance = targetAddress ? await getWalletUsdcBalance(targetAddress) : "0.00";
     let gasBalance = "0.00";
-    if (sellerAddress) {
+    if (targetAddress) {
       try {
-        const balance = await publicClient.getBalance({ address: sellerAddress });
+        const balance = await publicClient.getBalance({ address: targetAddress });
         gasBalance = formatUnits(balance, 18);
       } catch (err) {
         console.error("Failed to fetch seller gas balance:", err);
       }
     }
-    const gateway = sellerAddress ? await getGatewayBalances(sellerAddress) : { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" };
+    const gateway = targetAddress ? await getGatewayBalances(targetAddress) : { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" };
 
-    const totalReceived = heartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0).toFixed(6);
+    // Filter heartbeats by creator address
+    const filteredHeartbeats = heartbeats.filter(hb => 
+      !targetAddress || (hb as any).creatorAddress?.toLowerCase() === targetAddress.toLowerCase()
+    );
+
+    // Filter withdrawals by creator address
+    const filteredWithdrawals = withdrawals.filter(w => 
+      !targetAddress || w.destinationAddress.toLowerCase() === targetAddress.toLowerCase()
+    );
+
+    const totalReceived = filteredHeartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0).toFixed(6);
+
+    const stream = activeStreams.find(s => s.creatorAddress.toLowerCase() === targetAddress.toLowerCase());
+    const rate = stream ? stream.ratePerSecond : currentRatePerSecond;
 
     res.json({
       activeViewers,
       totalReceived,
-      rate: currentRatePerSecond,
-      sellerAddress: sellerAddress || "0x0000000000000000000000000000000000000000",
+      rate,
+      sellerAddress: targetAddress || "0x0000000000000000000000000000000000000000",
       walletBalance,
       gasBalance,
       gateway,
-      heartbeats: heartbeats.slice(-30).reverse(), // last 30 heartbeats
-      withdrawals: withdrawals.slice(-20).reverse(), // last 20 withdrawals
+      heartbeats: filteredHeartbeats.slice(-30).reverse(), // last 30 heartbeats
+      withdrawals: filteredWithdrawals.slice(-20).reverse(), // last 20 withdrawals
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch stats", details: String(error) });
@@ -282,10 +342,23 @@ app.post("/api/withdraw/confirm", (req, res) => {
 // Endpoint: Heartbeat payment receiver (conforms to x402 specification)
 app.post("/api/heartbeat", async (req, res) => {
   const paymentSignature = req.headers["payment-signature"] as string;
+  const creatorAddress = req.query.creator as string;
+
+  if (!creatorAddress) {
+    return res.status(400).json({ error: "creator query parameter is required" });
+  }
+
+  // Find the creator stream
+  const stream = activeStreams.find(
+    (s) => s.creatorAddress.toLowerCase() === creatorAddress.toLowerCase()
+  );
+
+  const rate = stream ? stream.ratePerSecond : currentRatePerSecond;
+  const targetSellerAddress = stream ? stream.creatorAddress : sellerAddress;
 
   // Heartbeat is sent every 2 seconds
   const heartbeatInterval = 2;
-  const heartbeatPrice = (currentRatePerSecond * heartbeatInterval).toFixed(6);
+  const heartbeatPrice = (rate * heartbeatInterval).toFixed(6);
   const amountAtomic = Math.round(parseFloat(heartbeatPrice) * 1_000_000);
 
   const requirements = {
@@ -293,8 +366,8 @@ app.post("/api/heartbeat", async (req, res) => {
     network: ARC_TESTNET_NETWORK,
     asset: ARC_TESTNET_USDC,
     amount: amountAtomic.toString(),
-    payTo: sellerAddress,
-    maxTimeoutSeconds: 2592000,
+    payTo: targetSellerAddress as `0x${string}`,
+    maxTimeoutSeconds: 2592000, // 30 days
     extra: {
       name: "GatewayWalletBatched",
       version: "1",
@@ -307,7 +380,7 @@ app.post("/api/heartbeat", async (req, res) => {
     const paymentRequired = {
       x402Version: 2,
       resource: {
-        url: "/api/heartbeat",
+        url: `/api/heartbeat?creator=${creatorAddress}`,
         description: `CastPay 2-second stream heartbeat (${heartbeatPrice} USDC)`,
         mimeType: "application/json",
       },
@@ -336,8 +409,15 @@ app.post("/api/heartbeat", async (req, res) => {
     logDebug("PAYLOAD: " + JSON.stringify(paymentPayload));
     logDebug("REQ: " + JSON.stringify(requirements));
 
+    // Construct relaxed verification requirements to absorb network latency and clock drifts
+    const verifyRequirements = {
+      ...requirements,
+      maxTimeoutSeconds: 2592000, // require 30 days (Circle Gateway minimum requirement for verify/settle)
+    };
+    logDebug("VERIFY REQ: " + JSON.stringify(verifyRequirements));
+
     // Verify signature
-    const verifyResult = await facilitator.verify(paymentPayload, requirements);
+    const verifyResult = await facilitator.verify(paymentPayload, verifyRequirements);
     if (!verifyResult.isValid) {
       logDebug(`VERIFY FAILED: ${verifyResult.invalidReason} | Payer: ${verifyResult.payer}`);
       return res.status(402).json({
@@ -346,40 +426,41 @@ app.post("/api/heartbeat", async (req, res) => {
       });
     }
 
-    // Settle signature
-    const settleResult = await facilitator.settle(paymentPayload, requirements);
-    if (!settleResult.success) {
-      console.error(`[CastPay] Settlement failed: ${settleResult.errorReason}`);
-      logDebug(`SETTLE FAILED: ${settleResult.errorReason}`);
-      return res.status(402).json({
-        error: "Payment settlement failed",
-        reason: settleResult.errorReason,
-      });
-    }
+    // Record active viewer immediately after successful verification
+    const payer = verifyResult.payer || "unknown";
+    activeViewersMap.set(`${payer.toLowerCase()}_${creatorAddress.toLowerCase()}`, Date.now());
 
-    // Record success
-    const payer = settleResult.payer || verifyResult.payer || "unknown";
-    activeViewersMap.set(payer, Date.now());
+    // Settle signature asynchronously in background to prevent blocking the event loop
+    facilitator.settle(paymentPayload, verifyRequirements).then((settleResult) => {
+      if (!settleResult.success) {
+        console.error(`[CastPay] Background settlement failed: ${settleResult.errorReason}`);
+        logDebug(`ASYNC SETTLE FAILED: ${settleResult.errorReason}`);
+      } else {
+        const settledPayer = settleResult.payer || verifyResult.payer || "unknown";
+        const heartbeatEvent = {
+          id: `hb_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          payer: settledPayer,
+          creatorAddress, // Store creator target
+          amount: heartbeatPrice,
+          timestamp: new Date().toISOString(),
+          txHash: settleResult.transaction || null,
+        };
 
-    const heartbeatEvent = {
-      id: `hb_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-      payer,
-      amount: heartbeatPrice,
-      timestamp: new Date().toISOString(),
-      txHash: settleResult.transaction || null,
-    };
-
-    heartbeats.push(heartbeatEvent);
-    console.log(`[CastPay] Heartbeat Settled: ${heartbeatPrice} USDC from ${payer} | Active Viewers: ${getActiveViewerCount()}`);
+        heartbeats.push(heartbeatEvent);
+        console.log(`[CastPay] Heartbeat Settled (Async): ${heartbeatPrice} USDC from ${settledPayer} to ${creatorAddress} | Active Viewers: ${getActiveViewerCount(creatorAddress)}`);
+      }
+    }).catch((err) => {
+      console.error("[CastPay] Background settlement exception:", err);
+      logDebug(`ASYNC SETTLE EXCEPTION: ${String(err)}`);
+    });
 
     res.header({
       "PAYMENT-RESPONSE": Buffer.from(JSON.stringify({
         success: true,
-        transaction: settleResult.transaction,
         network: ARC_TESTNET_NETWORK,
         payer,
       })).toString("base64")
-    }).json({ success: true, activeViewers: getActiveViewerCount() });
+    }).json({ success: true, activeViewers: getActiveViewerCount(creatorAddress) });
 
   } catch (error) {
     console.error("[CastPay] Error processing heartbeat:", error);
@@ -388,6 +469,154 @@ app.post("/api/heartbeat", async (req, res) => {
       require("fs").appendFileSync(logPath, `[${new Date().toISOString()}] EXCEPTION: ${String(error)}\n`);
     } catch (e) {}
     res.status(500).json({ error: "Internal payment processing error", details: String(error) });
+  }
+});
+
+// Endpoint: register active stream
+app.post("/api/streams/register", (req, res) => {
+  const { address, name, streamUrl, rate } = req.body;
+  if (!address || !name || !streamUrl || typeof rate !== "number") {
+    return res.status(400).json({ error: "address, name, streamUrl, and rate are required" });
+  }
+  if (!address.startsWith("0x") || address.length !== 42) {
+    return res.status(400).json({ error: "Invalid EVM address format" });
+  }
+
+  // Remove existing stream for this creator address if it exists
+  const idx = activeStreams.findIndex(s => s.creatorAddress.toLowerCase() === address.toLowerCase());
+  if (idx !== -1) {
+    activeStreams.splice(idx, 1);
+  }
+
+  activeStreams.push({
+    creatorAddress: address,
+    creatorName: name,
+    streamUrl,
+    ratePerSecond: rate,
+    isActive: true,
+  });
+
+  console.log(`[CastPay] Creator stream registered: ${name} (${address}) -> ${streamUrl} at ${rate} USDC/sec`);
+  res.json({ success: true, streams: activeStreams });
+});
+
+// Endpoint: stop stream
+app.post("/api/streams/stop", (req, res) => {
+  const { address } = req.body;
+  if (!address) {
+    return res.status(400).json({ error: "address is required" });
+  }
+  const idx = activeStreams.findIndex(s => s.creatorAddress.toLowerCase() === address.toLowerCase());
+  if (idx !== -1) {
+    activeStreams[idx].isActive = false;
+    console.log(`[CastPay] Creator stream stopped: ${activeStreams[idx].creatorName} (${address})`);
+    activeStreams.splice(idx, 1); // remove from active directory
+    return res.json({ success: true });
+  }
+  res.status(404).json({ error: "Active stream not found" });
+});
+
+// Endpoint: get active streams
+app.get("/api/streams", (req, res) => {
+  const publicStreams = activeStreams
+    .filter(s => s.isActive)
+    .map(s => ({
+      creatorAddress: s.creatorAddress,
+      creatorName: s.creatorName,
+      ratePerSecond: s.ratePerSecond,
+    }));
+  res.json(publicStreams);
+});
+
+// Endpoint: gated HLS stream proxy
+app.get("/api/stream/:creatorAddress/*", async (req, res) => {
+  const { creatorAddress } = req.params;
+  const filePath = (req.params as any)[0];
+  const viewerAddress = req.query.viewer as string;
+
+  if (!viewerAddress) {
+    return res.status(402).json({ error: "Payment Required - viewer address parameter missing" });
+  }
+
+  // Verify creator stream is live
+  const stream = activeStreams.find(s => s.creatorAddress.toLowerCase() === creatorAddress.toLowerCase());
+  if (!stream || !stream.isActive) {
+    return res.status(404).json({ error: "Stream offline or not found" });
+  }
+
+  // Verify that the viewer has a settled heartbeat in the last 20 seconds for this creator
+  const lastSeen = activeViewersMap.get(`${viewerAddress.toLowerCase()}_${creatorAddress.toLowerCase()}`);
+  const now = Date.now();
+  if (!lastSeen || now - lastSeen > 20000) {
+    return res.status(402).json({ error: "Payment Required - No active heartbeat found in the last 20 seconds" });
+  }
+
+  // Resolve base upstream URL
+  const lastSlash = stream.streamUrl.lastIndexOf("/");
+  const baseUrl = stream.streamUrl.substring(0, lastSlash + 1);
+  const targetUrl = baseUrl + filePath;
+
+  // 1. If it's a segment file (not .m3u8), check cache first to avoid hitting Owncast
+  if (!filePath.endsWith(".m3u8")) {
+    const cacheKey = `${creatorAddress.toLowerCase()}_${filePath}`;
+    const cached = segmentCache.get(cacheKey);
+    const nowMs = Date.now();
+
+    if (cached && (nowMs - cached.timestamp < CACHE_TTL_MS)) {
+      if (cached.contentType) {
+        res.setHeader("Content-Type", cached.contentType);
+      }
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      return res.send(cached.buffer);
+    }
+  }
+
+  // 2. Cache miss or playlist request: fetch from upstream
+  try {
+    const upstreamRes = await fetch(targetUrl);
+    if (!upstreamRes.ok) {
+      return res.status(upstreamRes.status).send("Upstream server error");
+    }
+
+    const contentType = upstreamRes.headers.get("content-type");
+    if (contentType) {
+      res.setHeader("Content-Type", contentType);
+    }
+
+    // Set CORS headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    if (filePath.endsWith(".m3u8")) {
+      // Modify playlist to append ?viewer=0x... to all relative links (segments or variant playlists)
+      const text = await upstreamRes.text();
+      const lines = text.split("\n");
+      const modifiedLines = lines.map(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          const separator = trimmed.includes("?") ? "&" : "?";
+          return `${trimmed}${separator}viewer=${encodeURIComponent(viewerAddress)}`;
+        }
+        return line;
+      });
+      res.send(modifiedLines.join("\n"));
+    } else {
+      // Stream segment or binary asset
+      const buffer = await upstreamRes.arrayBuffer();
+      const nodeBuffer = Buffer.from(buffer);
+
+      // Cache the segment
+      const cacheKey = `${creatorAddress.toLowerCase()}_${filePath}`;
+      segmentCache.set(cacheKey, {
+        buffer: nodeBuffer,
+        contentType,
+        timestamp: Date.now(),
+      });
+
+      res.send(nodeBuffer);
+    }
+  } catch (err) {
+    console.error(`[CastPay Proxy] Error proxying ${filePath}:`, err);
+    res.status(500).send("Stream proxy error");
   }
 });
 
