@@ -80,8 +80,26 @@ interface CachedSegment {
   timestamp: number;
 }
 
+interface CachedPlaylist {
+  text: string;
+  contentType: string | null;
+  timestamp: number;
+}
+
+interface CachedStats {
+  walletBalance: string;
+  gasBalance: string;
+  gateway: any;
+  timestamp: number;
+}
+
 const segmentCache = new Map<string, CachedSegment>();
+const playlistCache = new Map<string, CachedPlaylist>();
+const statsCache = new Map<string, CachedStats>();
+
 const CACHE_TTL_MS = 30000; // Cache segments for 30 seconds
+const PLAYLIST_CACHE_TTL_MS = 2000; // Cache playlists for 2 seconds
+const STATS_CACHE_TTL_MS = 10000; // Cache stats for 10 seconds
 
 // Periodic cache cleanup
 setInterval(() => {
@@ -91,13 +109,23 @@ setInterval(() => {
       segmentCache.delete(key);
     }
   }
+  for (const [key, cached] of playlistCache.entries()) {
+    if (now - cached.timestamp > PLAYLIST_CACHE_TTL_MS) {
+      playlistCache.delete(key);
+    }
+  }
+  for (const [key, cached] of statsCache.entries()) {
+    if (now - cached.timestamp > STATS_CACHE_TTL_MS) {
+      statsCache.delete(key);
+    }
+  }
 }, 10000);
 
 // Periodic active viewers cleanup
 setInterval(() => {
   const now = Date.now();
   for (const [key, lastSeen] of activeViewersMap.entries()) {
-    if (now - lastSeen > 20000) { // expire after 20 seconds of silence
+    if (now - lastSeen > 60000) { // expire after 60 seconds of silence
       activeViewersMap.delete(key);
     }
   }
@@ -193,17 +221,41 @@ app.get("/api/stats", async (req, res) => {
     const targetAddress = targetCreator ? (targetCreator as `0x${string}`) : sellerAddress;
 
     const activeViewers = getActiveViewerCount(targetAddress);
-    const walletBalance = targetAddress ? await getWalletUsdcBalance(targetAddress) : "0.00";
+    
+    // In-memory cache for on-chain/Circle Gateway queries
+    const cacheKey = targetAddress ? targetAddress.toLowerCase() : "none";
+    const cached = statsCache.get(cacheKey);
+    const now = Date.now();
+
+    let walletBalance = "0.00";
     let gasBalance = "0.00";
-    if (targetAddress) {
-      try {
-        const balance = await publicClient.getBalance({ address: targetAddress });
-        gasBalance = formatUnits(balance, 18);
-      } catch (err) {
-        console.error("Failed to fetch seller gas balance:", err);
+    let gateway = { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" };
+
+    if (cached && (now - cached.timestamp < STATS_CACHE_TTL_MS)) {
+      walletBalance = cached.walletBalance;
+      gasBalance = cached.gasBalance;
+      gateway = cached.gateway;
+    } else {
+      walletBalance = targetAddress ? await getWalletUsdcBalance(targetAddress) : "0.00";
+      if (targetAddress) {
+        try {
+          const balance = await publicClient.getBalance({ address: targetAddress });
+          gasBalance = formatUnits(balance, 18);
+        } catch (err) {
+          console.error("Failed to fetch seller gas balance:", err);
+        }
+      }
+      gateway = targetAddress ? await getGatewayBalances(targetAddress) : { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" };
+
+      if (targetAddress) {
+        statsCache.set(cacheKey, {
+          walletBalance,
+          gasBalance,
+          gateway,
+          timestamp: now,
+        });
       }
     }
-    const gateway = targetAddress ? await getGatewayBalances(targetAddress) : { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" };
 
     // Filter heartbeats by creator address
     const filteredHeartbeats = heartbeats.filter(hb => 
@@ -547,11 +599,11 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
     return res.status(404).json({ error: "Stream offline or not found" });
   }
 
-  // Verify that the viewer has a settled heartbeat in the last 20 seconds for this creator
+  // Verify that the viewer has a settled heartbeat in the last 60 seconds for this creator
   const lastSeen = activeViewersMap.get(`${viewerAddress.toLowerCase()}_${creatorAddress.toLowerCase()}`);
   const now = Date.now();
-  if (!lastSeen || now - lastSeen > 20000) {
-    return res.status(402).json({ error: "Payment Required - No active heartbeat found in the last 20 seconds" });
+  if (!lastSeen || now - lastSeen > 60000) {
+    return res.status(402).json({ error: "Payment Required - No active heartbeat found in the last 60 seconds" });
   }
 
   // Resolve base upstream URL
@@ -559,9 +611,32 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
   const baseUrl = stream.streamUrl.substring(0, lastSlash + 1);
   const targetUrl = baseUrl + filePath;
 
-  // 1. If it's a segment file (not .m3u8), check cache first to avoid hitting Owncast
-  if (!filePath.endsWith(".m3u8")) {
-    const cacheKey = `${creatorAddress.toLowerCase()}_${filePath}`;
+  const cacheKey = `${creatorAddress.toLowerCase()}_${filePath}`;
+
+  // 1. If it's a playlist file (.m3u8), check playlist cache first
+  if (filePath.endsWith(".m3u8")) {
+    const cached = playlistCache.get(cacheKey);
+    const nowMs = Date.now();
+
+    if (cached && (nowMs - cached.timestamp < PLAYLIST_CACHE_TTL_MS)) {
+      if (cached.contentType) {
+        res.setHeader("Content-Type", cached.contentType);
+      }
+      res.setHeader("Access-Control-Allow-Origin", "*");
+
+      const lines = cached.text.split("\n");
+      const modifiedLines = lines.map(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          const separator = trimmed.includes("?") ? "&" : "?";
+          return `${trimmed}${separator}viewer=${encodeURIComponent(viewerAddress)}`;
+        }
+        return line;
+      });
+      return res.send(modifiedLines.join("\n"));
+    }
+  } else {
+    // 2. If it's a segment file, check segment cache first to avoid hitting Owncast
     const cached = segmentCache.get(cacheKey);
     const nowMs = Date.now();
 
@@ -574,7 +649,7 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
     }
   }
 
-  // 2. Cache miss or playlist request: fetch from upstream
+  // 3. Cache miss: fetch from upstream
   try {
     const upstreamRes = await fetch(targetUrl);
     if (!upstreamRes.ok) {
@@ -590,8 +665,15 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
 
     if (filePath.endsWith(".m3u8")) {
-      // Modify playlist to append ?viewer=0x... to all relative links (segments or variant playlists)
       const text = await upstreamRes.text();
+      
+      // Cache the raw playlist
+      playlistCache.set(cacheKey, {
+        text,
+        contentType,
+        timestamp: Date.now(),
+      });
+
       const lines = text.split("\n");
       const modifiedLines = lines.map(line => {
         const trimmed = line.trim();
@@ -608,7 +690,6 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
       const nodeBuffer = Buffer.from(buffer);
 
       // Cache the segment
-      const cacheKey = `${creatorAddress.toLowerCase()}_${filePath}`;
       segmentCache.set(cacheKey, {
         buffer: nodeBuffer,
         contentType,
