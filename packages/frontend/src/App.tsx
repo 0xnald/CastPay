@@ -4,7 +4,6 @@ import {
   Pause, 
   Wallet, 
   Settings, 
-  Coins, 
   ArrowUpRight, 
   Tv, 
   RefreshCw, 
@@ -12,7 +11,9 @@ import {
   TrendingUp, 
   ExternalLink,
   Activity,
-  UserCheck
+  UserCheck,
+  Copy,
+  LogOut
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
@@ -75,6 +76,20 @@ const GATEWAY_WALLET_ABI = [
 
 const padAddress = (addr: string) => {
   return pad(addr.toLowerCase() as `0x${string}`, { size: 32 });
+};
+
+const getExplorerTxLink = (chainName: string, txHash: string) => {
+  if (!txHash) return "";
+  switch(chainName) {
+    case "arcTestnet": return `https://testnet.arcscan.app/tx/${txHash}`;
+    case "baseSepolia": return `https://sepolia.basescan.org/tx/${txHash}`;
+    case "sepolia": return `https://sepolia.etherscan.io/tx/${txHash}`;
+    case "arbitrumSepolia": return `https://sepolia.arbiscan.io/tx/${txHash}`;
+    case "optimismSepolia": return `https://sepolia-optimism.etherscan.io/tx/${txHash}`;
+    case "avalancheFuji": return `https://testnet.snowtrace.io/tx/${txHash}`;
+    case "polygonAmoy": return `https://amoy.polygonscan.com/tx/${txHash}`;
+    default: return `https://testnet.arcscan.app/tx/${txHash}`;
+  }
 };
 
 const createBurnIntent = (
@@ -147,8 +162,16 @@ const switchNetwork = async (
   }
 };
 
+const formatWatchTime = (seconds: number) => {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m ${seconds % 60}s`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+};
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"viewer" | "creator">("viewer");
+  const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator">("landing");
   
   // App States
   const [isPlaying, setIsPlaying] = useState(false);
@@ -234,9 +257,15 @@ export default function App() {
   };
 
   const [particles, setParticles] = useState<Array<{ id: number; text: string; x: number; y: number }>>([]);
-  const [recentViewerPayments, setRecentViewerPayments] = useState<Array<{ id: string; amount: string; time: string; success: boolean }>>([]);
+  const [recentViewerPayments, setRecentViewerPayments] = useState<Array<{ id: string; amount: string; time: string; success: boolean; txHash?: string | null }>>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+  const [showWalletDropdown, setShowWalletDropdown] = useState(false);
+  const [globalStats, setGlobalStats] = useState({
+    totalRevenueProcessed: "1548.245300",
+    totalStreamingSessions: 42,
+    totalWatchTime: 142850
+  });
 
   // Initialize/retrieve ephemeral private key
   useEffect(() => {
@@ -258,6 +287,38 @@ export default function App() {
       }
     }
   }, [viewerKey]);
+
+  // Fetch global platform-wide statistics
+  useEffect(() => {
+    const fetchGlobalStats = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/global-stats`);
+        if (res.ok) {
+          const data = await res.json();
+          setGlobalStats(data);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch global stats:", err);
+      }
+    };
+    fetchGlobalStats();
+    const interval = setInterval(fetchGlobalStats, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Dropdown reference and click-outside handler
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowWalletDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Fetch stats periodically
   useEffect(() => {
@@ -503,7 +564,8 @@ export default function App() {
           id: `tx_${Date.now()}`,
           amount: heartbeatPrice,
           time: new Date().toLocaleTimeString(),
-          success: true
+          success: true,
+          txHash: result.transaction
         },
         ...prev.slice(0, 9)
       ]);
@@ -1108,15 +1170,151 @@ export default function App() {
     );
   };
 
+  const renderLandingPage = () => {
+    return (
+      <div className="relative">
+        <div className="stripe-bg"></div>
+        
+        {/* Hero Section */}
+        <div className="py-20 text-center max-w-4xl mx-auto flex flex-col items-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-gold-accent/20 bg-gold-accent/5 text-xs text-gold-accent mb-6">
+            <span className="w-1.5 h-1.5 rounded-full bg-gold-accent animate-pulse"></span>
+            CastPay is live on Arc Testnet
+          </div>
+          
+          <h1 className="hero-heading">
+            Continuous payment infrastructure for live video streaming
+          </h1>
+          
+          <p className="text-secondary text-base sm:text-lg mb-10 max-w-2xl font-normal leading-relaxed">
+            CastPay enables pay-per-second content monetization. Viewers pay micro-amounts in real time using non-custodial gateway wallets, while creators withdraw earnings instantly to any chain.
+          </p>
+          
+          <div className="flex flex-wrap gap-4 justify-center">
+            <button 
+              onClick={() => setActiveTab("viewer")}
+              className="btn-gold py-3 px-6 text-sm"
+            >
+              <Tv className="w-4 h-4 fill-current" />
+              Launch Viewer Portal
+            </button>
+            <button 
+              onClick={() => setActiveTab("creator")}
+              className="btn-outline py-3 px-6 text-sm"
+            >
+              <Settings className="w-4 h-4" />
+              Creator Console
+            </button>
+          </div>
+        </div>
+
+        {/* Global Statistics Banner */}
+        <div className="glass-panel p-8 mb-16 border border-gold-accent/20">
+          <h3 className="text-center text-xs uppercase tracking-widest text-secondary mb-6 font-semibold">
+            CastPay Global Performance
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center divide-y md:divide-y-0 md:divide-x divide-gold-muted/30">
+            <div className="pt-4 md:pt-0 md:px-4">
+              <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Total Revenue Processed</span>
+              <div className="stat-value">{parseFloat(globalStats.totalRevenueProcessed).toFixed(4)} USDC</div>
+              <span className="text-[10px] text-secondary mt-1 block">Live on-chain settlements</span>
+            </div>
+            <div className="pt-6 md:pt-0 md:px-4">
+              <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Total Streaming Sessions</span>
+              <div className="stat-value">{globalStats.totalStreamingSessions} Sessions</div>
+              <span className="text-[10px] text-secondary mt-1 block">Active and historical streamers</span>
+            </div>
+            <div className="pt-6 md:pt-0 md:px-4">
+              <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Total Watch Time</span>
+              <div className="stat-value">{formatWatchTime(globalStats.totalWatchTime)}</div>
+              <span className="text-[10px] text-secondary mt-1 block">Accumulated stream duration</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Features & Developer API Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+          {/* Features cards */}
+          <div className="flex flex-col gap-6">
+            <div className="landing-card">
+              <h4 className="font-serif text-2xl text-gold-bright mb-2">Non-Custodial Flow</h4>
+              <p className="text-xs text-secondary leading-relaxed">
+                Zero custodial keys. Viewers pre-fund an ephemeral local session wallet, authorizing continuous background payments while they watch, with no annoying MetaMask popups during playback.
+              </p>
+            </div>
+            
+            <div className="landing-card">
+              <h4 className="font-serif text-2xl text-gold-bright mb-2">Cross-Chain Settlements</h4>
+              <p className="text-xs text-secondary leading-relaxed">
+                Withdraw funds to Arbitrum, Base, Optimism, Avalanche, Polygon, or Ethereum Mainnet. Built on top of Circle Gateway API, utilizing EIP-712 BurnIntents and cross-chain mint authorizations.
+              </p>
+            </div>
+            
+            <div className="landing-card">
+              <h4 className="font-serif text-2xl text-gold-bright mb-2">1.5% Platform Take Rate</h4>
+              <p className="text-xs text-secondary leading-relaxed">
+                A minimal take-rate is automatically appended to the billing stream. Viewers pay the fee-inclusive rate, and fees are securely separated and routed to the platform wallet upon creator withdrawal.
+              </p>
+            </div>
+          </div>
+
+          {/* Developer API mock panel */}
+          <div className="glass-panel p-6 flex flex-col bg-[#0b0a08]/80 border border-gold-muted/20 relative">
+            <div className="absolute top-3 right-3 flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]"></span>
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]"></span>
+              <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]"></span>
+            </div>
+            <div className="text-[10px] uppercase font-semibold text-secondary mb-4 select-none">Developer Quickstart API</div>
+            <div className="font-mono text-xs text-secondary leading-relaxed flex-grow select-all">
+              <div className="text-[#a3a099] mb-1">// 1. Install CastPay SDK</div>
+              <div className="text-[#e2e8f0] mb-3">npm install @circle-fin/x402-batching</div>
+              
+              <div className="text-[#a3a099] mb-1">// 2. Initialize non-custodial gateway client</div>
+              <div>
+                <span className="text-gold-bright">const </span>client = <span className="text-gold-bright">new </span><span className="text-[#60a5fa]">GatewayClient</span>({`{`}
+              </div>
+              <div className="pl-4">
+                chain: <span className="text-emerald-400">"arcTestnet"</span>,
+              </div>
+              <div className="pl-4">
+                privateKey: viewerSessionKey
+              </div>
+              <div className="mb-3">{`});`}</div>
+
+              <div className="text-[#a3a099] mb-1">// 3. Establish pay-per-second billing session</div>
+              <div>
+                <span className="text-gold-bright">await </span>client.<span className="text-[#60a5fa]">pay</span>(<span className="text-emerald-400">"https://api.castpay.live/api/heartbeat?creator=0x..."</span>);
+              </div>
+            </div>
+            <div className="border-t border-gold-muted/20 pt-4 mt-4 flex justify-between items-center text-xs text-secondary">
+              <span>Read the integration guidelines</span>
+              <a href="https://github.com/circlefin" target="_blank" rel="noopener noreferrer" className="text-gold-accent hover:text-gold-bright inline-flex items-center gap-1">
+                API Reference <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen pb-12">
       {/* Upper Navigation Bar */}
       <header className="border-b border-gold-muted bg-[#0c0a08]/90 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Coins className="w-7 h-7 text-gold-accent" />
+          <div 
+            onClick={() => setActiveTab("landing")}
+            className="flex items-center gap-3 cursor-pointer select-none group"
+          >
+            <img 
+              src="/logo.jpg" 
+              alt="CastPay Logo" 
+              className="w-8 h-8 rounded-lg object-cover border border-gold-muted/30 group-hover:border-gold-accent transition-all"
+            />
             <div>
-              <span className="font-serif text-2xl tracking-wide font-medium">CastPay</span>
+              <span className="font-serif text-2xl tracking-wide font-medium group-hover:text-gold-bright transition-all">CastPay</span>
               <span className="text-[10px] text-secondary border border-gold-muted px-1.5 py-0.5 rounded ml-2 uppercase font-medium">Arc L1</span>
             </div>
           </div>
@@ -1135,13 +1333,48 @@ export default function App() {
             )}
             
             {connectedAddress ? (
-              <button 
-                onClick={connectWallet}
-                className="text-xs border border-gold-muted hover:border-gold-bright px-3 py-1.5 rounded-lg font-mono text-gold-bright flex items-center gap-1.5 transition-all bg-[#0f0e0b]"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80]"></span>
-                {connectedAddress.slice(0, 6)}...{connectedAddress.slice(-4)}
-              </button>
+              <div className="relative" ref={dropdownRef}>
+                <button 
+                  onClick={() => setShowWalletDropdown(!showWalletDropdown)}
+                  className="text-xs border border-gold-muted hover:border-gold-bright px-3 py-1.5 rounded-lg font-mono text-gold-bright flex items-center gap-1.5 transition-all bg-[#0f0e0b]"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80]"></span>
+                  {connectedAddress.slice(0, 6)}...{connectedAddress.slice(-4)}
+                </button>
+                {showWalletDropdown && (
+                  <div className="wallet-dropdown-panel">
+                    <div className="text-[10px] uppercase font-semibold text-secondary mb-2">Connected Wallet</div>
+                    <div className="text-xs font-mono text-gold-bright break-all mb-4 select-all bg-[#0a0907] p-2 rounded border border-gold-muted/10">
+                      {connectedAddress}
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(connectedAddress);
+                          setSuccessMsg("Wallet address copied to clipboard!");
+                          setShowWalletDropdown(false);
+                        }}
+                        className="wallet-dropdown-item"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-gold-accent" />
+                        Copy Address
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setConnectedAddress("");
+                          setConnectedChainId(null);
+                          setShowWalletDropdown(false);
+                          setSuccessMsg("Wallet disconnected.");
+                        }}
+                        className="wallet-dropdown-item disconnect"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        Disconnect Wallet
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <button 
                 onClick={connectWallet}
@@ -1154,14 +1387,20 @@ export default function App() {
 
             <div className="flex p-0.5 bg-[#14120f] border border-gold-muted rounded-lg">
               <button 
+                onClick={() => setActiveTab("landing")}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "landing" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
+              >
+                Home
+              </button>
+              <button 
                 onClick={() => setActiveTab("viewer")}
-                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "viewer" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "viewer" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
               >
                 Viewer Portal
               </button>
               <button 
                 onClick={() => setActiveTab("creator")}
-                className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "creator" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "creator" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
               >
                 Creator Console
               </button>
@@ -1185,7 +1424,9 @@ export default function App() {
       </div>
 
       <main className="max-w-6xl mx-auto px-6 mt-4">
-        {activeTab === "viewer" ? (
+        {activeTab === "landing" ? (
+          renderLandingPage()
+        ) : activeTab === "viewer" ? (
           /* ========================================================================= */
           /* VIEWERS PORTAL TAB                                                       */
           /* ========================================================================= */
@@ -1368,7 +1609,20 @@ export default function App() {
                       <tbody className="divide-y divide-gold-muted/5">
                         {recentViewerPayments.map(p => (
                           <tr key={p.id} className="hover:bg-card-hover/20">
-                            <td className="py-2.5 font-mono text-[10px] text-secondary">{p.id}</td>
+                            <td className="py-2.5 font-mono text-[10px] text-secondary">
+                              {p.txHash ? (
+                                <a 
+                                  href={`https://testnet.arcscan.app/tx/${p.txHash}`}
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-gold-accent hover:text-gold-bright underline inline-flex items-center gap-0.5"
+                                >
+                                  {p.id} <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              ) : (
+                                p.id
+                              )}
+                            </td>
                             <td className="py-2.5 font-medium text-gold-bright">{p.amount} USDC</td>
                             <td className="py-2.5 text-secondary">{p.time}</td>
                             <td className="py-2.5 text-right">
@@ -1890,6 +2144,16 @@ export default function App() {
                         <div>
                           <strong className="text-gold-bright">{w.amount} USDC</strong>
                           <span className="text-[10px] text-secondary block">Chain: {w.destinationChain}</span>
+                          {w.txHash && (
+                            <a 
+                              href={getExplorerTxLink(w.destinationChain, w.txHash)} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="text-[10px] text-gold-accent hover:text-gold-bright underline inline-flex items-center gap-0.5 mt-0.5"
+                            >
+                              View Tx <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
                         </div>
                         <div className="text-right">
                           {w.status === "confirmed" ? (
