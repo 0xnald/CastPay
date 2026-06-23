@@ -44,6 +44,7 @@ if (BatchEvmScheme && BatchEvmScheme.prototype) {
 const BACKEND_URL = "http://localhost:3001";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
 const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
+const PLATFORM_WALLET = "0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA";
 
 const GATEWAY_MINTER_ABI = [
   {
@@ -659,7 +660,11 @@ export default function App() {
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
+      // Calculate Platform Fee (1.5%) and Net withdrawal amount
       const withdrawAmountAtomic = parseUnits(withdrawAmount, 6);
+      const feeAmountAtomic = (withdrawAmountAtomic * 15n) / 1015n; // 1.5% fee split from gross (1.015)
+      const netAmountAtomic = withdrawAmountAtomic - feeAmountAtomic;
+
       const recipient = withdrawAddress || creatorStats.sellerAddress;
       const maxFeeVal = parseUnits("2.01", 6); // default max fee 2.01 USDC
 
@@ -669,15 +674,29 @@ export default function App() {
         throw new Error(`Unsupported destination chain: ${withdrawChain}`);
       }
 
-      // 2. Construct the BurnIntent payload
+      // 2. Construct the BurnIntent payloads
+      // A. Net BurnIntent to the creator
       const burnIntent = createBurnIntent(
         fromConfig,
         toConfig,
-        withdrawAmountAtomic,
+        netAmountAtomic,
         creatorStats.sellerAddress,
         recipient,
         maxFeeVal
       );
+
+      // B. Fee BurnIntent to the platform (if fee > 0)
+      let feeBurnIntent = null;
+      if (feeAmountAtomic > 0n) {
+        feeBurnIntent = createBurnIntent(
+          fromConfig,
+          toConfig,
+          feeAmountAtomic,
+          creatorStats.sellerAddress,
+          PLATFORM_WALLET,
+          maxFeeVal
+        );
+      }
 
       const walletClient = createWalletClient({
         account: connectedAddress as `0x${string}`,
@@ -685,49 +704,67 @@ export default function App() {
         transport: custom((window as any).ethereum)
       });
 
-      // 3. Prompt user to sign EIP-712 BurnIntent typed data via MetaMask
-      setSuccessMsg("Please sign the burn intent authorization in MetaMask...");
+      const typesConfig = {
+        EIP712Domain: [
+          { name: "name", type: "string" },
+          { name: "version", type: "string" }
+        ],
+        TransferSpec: [
+          { name: "version", type: "uint32" },
+          { name: "sourceDomain", type: "uint32" },
+          { name: "destinationDomain", type: "uint32" },
+          { name: "sourceContract", type: "bytes32" },
+          { name: "destinationContract", type: "bytes32" },
+          { name: "sourceToken", type: "bytes32" },
+          { name: "destinationToken", type: "bytes32" },
+          { name: "sourceDepositor", type: "bytes32" },
+          { name: "destinationRecipient", type: "bytes32" },
+          { name: "sourceSigner", type: "bytes32" },
+          { name: "destinationCaller", type: "bytes32" },
+          { name: "value", type: "uint256" },
+          { name: "salt", type: "bytes32" },
+          { name: "hookData", type: "bytes" }
+        ],
+        BurnIntent: [
+          { name: "maxBlockHeight", type: "uint256" },
+          { name: "maxFee", type: "uint256" },
+          { name: "spec", type: "TransferSpec" }
+        ]
+      } as const;
+
+      // 3. Prompt user to sign Net EIP-712 BurnIntent typed data via MetaMask
+      setSuccessMsg(`Please sign Net withdrawal authorization (${(parseFloat(formatUnits(netAmountAtomic, 6))).toFixed(4)} USDC) in MetaMask...`);
       const signature = await walletClient.signTypedData({
         domain: { name: "GatewayWallet", version: "1" },
-        types: {
-          EIP712Domain: [
-            { name: "name", type: "string" },
-            { name: "version", type: "string" }
-          ],
-          TransferSpec: [
-            { name: "version", type: "uint32" },
-            { name: "sourceDomain", type: "uint32" },
-            { name: "destinationDomain", type: "uint32" },
-            { name: "sourceContract", type: "bytes32" },
-            { name: "destinationContract", type: "bytes32" },
-            { name: "sourceToken", type: "bytes32" },
-            { name: "destinationToken", type: "bytes32" },
-            { name: "sourceDepositor", type: "bytes32" },
-            { name: "destinationRecipient", type: "bytes32" },
-            { name: "sourceSigner", type: "bytes32" },
-            { name: "destinationCaller", type: "bytes32" },
-            { name: "value", type: "uint256" },
-            { name: "salt", type: "bytes32" },
-            { name: "hookData", type: "bytes" }
-          ],
-          BurnIntent: [
-            { name: "maxBlockHeight", type: "uint256" },
-            { name: "maxFee", type: "uint256" },
-            { name: "spec", type: "TransferSpec" }
-          ]
-        },
+        types: typesConfig,
         primaryType: "BurnIntent",
         message: burnIntent
       });
 
-      // 4. POST the signature to the backend sidecar (which proxies to Circle's transfer API)
-      setSuccessMsg("Submitting withdrawal signature to CastPay server...");
+      // 4. Prompt user to sign Platform Fee EIP-712 BurnIntent typed data if applicable
+      let feeSignature = null;
+      if (feeBurnIntent) {
+        setSuccessMsg(`Please sign Platform Fee authorization (${(parseFloat(formatUnits(feeAmountAtomic, 6))).toFixed(4)} USDC) in MetaMask...`);
+        // Wait briefly between signatures for user friendliness
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        feeSignature = await walletClient.signTypedData({
+          domain: { name: "GatewayWallet", version: "1" },
+          types: typesConfig,
+          primaryType: "BurnIntent",
+          message: feeBurnIntent
+        });
+      }
+
+      // 5. POST both signatures to the backend sidecar
+      setSuccessMsg("Submitting withdrawal signatures to CastPay server...");
       const res = await fetch(`${BACKEND_URL}/api/withdraw`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           burnIntent,
           signature,
+          feeBurnIntent,
+          feeSignature,
           destinationChain: withdrawChain,
         }, (_, v) => typeof v === "bigint" ? v.toString() : v),
       });
@@ -1212,7 +1249,7 @@ export default function App() {
                   {/* Player actions panel */}
                   <div className="p-5 flex flex-col sm:flex-row gap-4 justify-between items-center bg-[#0d0b09]">
                     <div className="text-xs text-secondary flex-grow">
-                      <div>Rate: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 2).toFixed(4)} USDC</strong> / 2s</div>
+                      <div>Rate: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 1.015 * 2).toFixed(5)} USDC</strong> / 2s <span className="text-secondary text-[9px] font-normal">(incl. 1.5% fee)</span></div>
                       <div className="mt-0.5">Creator Wallet: <span className="font-mono">{selectedCreator.creatorAddress.slice(0, 10)}...{selectedCreator.creatorAddress.slice(-8)}</span></div>
                     </div>
 
@@ -1287,7 +1324,7 @@ export default function App() {
                             </div>
                             <h4 className="font-serif text-lg text-gold-bright">{stream.creatorName}</h4>
                             <p className="text-xs text-secondary mt-1">
-                              Rate: <strong className="text-gold-accent">{(stream.ratePerSecond * 2).toFixed(4)} USDC</strong> / 2s
+                               Rate: <strong className="text-gold-accent">{(stream.ratePerSecond * 1.015 * 2).toFixed(5)} USDC</strong> / 2s <span className="text-secondary text-[9px] font-normal">(incl. fee)</span>
                             </p>
                           </div>
                           <button
@@ -1479,11 +1516,14 @@ export default function App() {
                 </div>
 
                 <div className="glass-panel p-5">
-                  <span className="text-[10px] uppercase font-semibold text-secondary block">Total Revenue (Portal)</span>
+                  <span className="text-[10px] uppercase font-semibold text-secondary block">Total Gross Revenue</span>
                   <div className="flex items-baseline gap-2 mt-2">
                     <span className="font-serif text-4xl text-gold-accent">{parseFloat(creatorStats.totalReceived).toFixed(4)}</span>
                     <span className="text-xs text-secondary font-medium">USDC</span>
                   </div>
+                  <span className="text-[9px] text-secondary mt-1.5 block">
+                    Net: <strong className="text-gold-bright">{(parseFloat(creatorStats.totalReceived) * 100 / 101.5).toFixed(4)} USDC</strong> | Fee: <strong className="text-gold-bright">{(parseFloat(creatorStats.totalReceived) * 1.5 / 101.5).toFixed(4)} USDC</strong>
+                  </span>
                 </div>
 
                 <div className="glass-panel p-5">
@@ -1492,6 +1532,9 @@ export default function App() {
                     <span className="font-serif text-4xl text-primary">{parseFloat(creatorStats.gateway.available).toFixed(4)}</span>
                     <span className="text-xs text-secondary font-medium">USDC</span>
                   </div>
+                  <span className="text-[9px] text-secondary mt-1.5 block">
+                    Net Payout: <strong className="text-gold-bright">{(parseFloat(creatorStats.gateway.available) * 100 / 101.5).toFixed(4)} USDC</strong> | Fee: <strong className="text-gold-bright">{(parseFloat(creatorStats.gateway.available) * 1.5 / 101.5).toFixed(4)} USDC</strong>
+                  </span>
                 </div>
               </div>
 
@@ -1689,7 +1732,7 @@ export default function App() {
                         placeholder="e.g. 0.0001"
                       />
                       <span className="text-[9px] text-secondary mt-1 block">
-                        Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> per 2-second heartbeat
+                        Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> per 2s (Viewer pays <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 1.015 * 2).toFixed(5)} USDC</strong>, incl. 1.5% fee)
                       </span>
                     </div>
 
@@ -1720,7 +1763,7 @@ export default function App() {
                     
                     <div className="text-xs text-secondary">
                       <div>Name: <strong className="text-gold-bright">{creatorNameInput}</strong></div>
-                      <div className="mt-1">Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> / 2s</div>
+                      <div className="mt-1">Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> / 2s (Viewer pays <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 1.015 * 2).toFixed(5)} USDC</strong>)</div>
                     </div>
 
                     <div className="border-t border-gold-muted/30 pt-3">
