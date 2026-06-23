@@ -20,6 +20,27 @@ import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
 import { arcTestnet } from "viem/chains";
 
+// Monkeypatch EIP-3009 signature generation to add a 1-day (86400s) buffer to the validBefore timestamp.
+// This ensures that the signed signature's validity exceeds the accepted maxTimeoutSeconds by 24 hours,
+// absorbing network latency and client-side clock skew, thereby avoiding "authorization_validity_too_short".
+const patchPayload = (original: any) => {
+  if (!original) return original;
+  return async function(this: any, x402Version: any, requirements: any) {
+    const modifiedRequirements = {
+      ...requirements,
+      maxTimeoutSeconds: (requirements.maxTimeoutSeconds || 0) + 86400,
+    };
+    return await original.call(this, x402Version, modifiedRequirements);
+  };
+};
+
+if (GatewayClient && GatewayClient.prototype) {
+  (GatewayClient.prototype as any).createPaymentPayload = patchPayload((GatewayClient.prototype as any).createPaymentPayload);
+}
+if (BatchEvmScheme && BatchEvmScheme.prototype) {
+  (BatchEvmScheme.prototype as any).createPaymentPayload = patchPayload((BatchEvmScheme.prototype as any).createPaymentPayload);
+}
+
 const BACKEND_URL = "http://localhost:3001";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
 const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
