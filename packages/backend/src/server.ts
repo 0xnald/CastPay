@@ -24,6 +24,7 @@ const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000" as const;
 const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
 const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
 const ARC_TESTNET_DOMAIN = 26;
+const PLATFORM_WALLET = "0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA";
 
 let sellerAddress = process.env.SELLER_ADDRESS as `0x${string}`;
 let sellerPrivateKey = process.env.SELLER_PRIVATE_KEY as `0x${string}` | undefined;
@@ -316,7 +317,7 @@ app.post("/api/register", (req, res) => {
 
 // Endpoint: withdraw funds from Circle Gateway
 app.post("/api/withdraw", async (req, res) => {
-  const { burnIntent, signature, destinationChain } = req.body;
+  const { burnIntent, signature, feeBurnIntent, feeSignature, destinationChain } = req.body;
   if (!burnIntent || !signature || !destinationChain) {
     return res.status(400).json({ error: "burnIntent, signature, and destinationChain are required" });
   }
@@ -341,6 +342,31 @@ app.post("/api/withdraw", async (req, res) => {
 
   try {
     const GATEWAY_API_TESTNET = "https://gateway-api-testnet.circle.com/v1";
+
+    // Process the platform fee transfer in the background if it is supplied
+    if (feeBurnIntent && feeSignature) {
+      const feeSpec = feeBurnIntent.spec;
+      if (!feeSpec || !feeSpec.destinationRecipient) {
+        return res.status(400).json({ error: "Invalid feeBurnIntent format" });
+      }
+      const feeRecipient = "0x" + feeSpec.destinationRecipient.slice(-40);
+      if (feeRecipient.toLowerCase() !== PLATFORM_WALLET.toLowerCase()) {
+        return res.status(400).json({ error: "Invalid platform fee recipient address" });
+      }
+
+      fetch(`${GATEWAY_API_TESTNET}/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          [{ burnIntent: feeBurnIntent, signature: feeSignature }],
+          (_, v) => typeof v === "bigint" ? v.toString() : v
+        )
+      }).then(r => r.json()).then(resData => {
+        console.log("[CastPay Platform Fee] Settle result:", resData);
+      }).catch(e => {
+        console.error("[CastPay Platform Fee] Settle failed:", e);
+      });
+    }
     
     // Proxy the pre-signed BurnIntent request to Circle Gateway API
     const response = await fetch(`${GATEWAY_API_TESTNET}/transfer`, {
@@ -413,8 +439,11 @@ app.post("/api/heartbeat", async (req, res) => {
 
   // Heartbeat is sent every 2 seconds
   const heartbeatInterval = 2;
-  const heartbeatPrice = (rate * heartbeatInterval).toFixed(6);
-  const amountAtomic = Math.round(parseFloat(heartbeatPrice) * 1_000_000);
+  // Calculate base and fee in atomic units (6 decimals for USDC)
+  const baseAmountAtomic = Math.round(rate * heartbeatInterval * 1_000_000);
+  const feeAmountAtomic = Math.round(baseAmountAtomic * 0.015); // 1.5% fee
+  const amountAtomic = baseAmountAtomic + feeAmountAtomic;
+  const heartbeatPrice = (amountAtomic / 1_000_000).toFixed(6);
 
   const requirements = {
     scheme: "exact" as const,
