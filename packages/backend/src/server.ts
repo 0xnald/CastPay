@@ -423,10 +423,10 @@ app.post("/api/withdraw/confirm", (req, res) => {
 // Endpoint: Heartbeat payment receiver (conforms to x402 specification)
 app.post("/api/heartbeat", async (req, res) => {
   const paymentSignature = req.headers["payment-signature"] as string;
-  const creatorAddress = req.query.creator as string;
+  const creatorAddress = (req.query.creator as string) || sellerAddress;
 
   if (!creatorAddress) {
-    return res.status(400).json({ error: "creator query parameter is required" });
+    return res.status(400).json({ error: "creator query parameter or default sellerAddress is required" });
   }
 
   // Find the creator stream
