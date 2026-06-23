@@ -202,6 +202,36 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const heartbeatIntervalRef = useRef<any>(null);
+  const gatewayClientRef = useRef<GatewayClient | null>(null);
+  const publicClientRef = useRef<any>(null);
+
+  const getPublicClient = () => {
+    if (!publicClientRef.current) {
+      publicClientRef.current = createPublicClient({
+        chain: arcTestnet,
+        transport: fallback([
+          http(ARC_TESTNET_RPC),
+          http("https://5042002.rpc.thirdweb.com")
+        ]),
+      });
+    }
+    return publicClientRef.current;
+  };
+
+  const getGatewayClient = () => {
+    if (!viewerKey) return null;
+    if (!gatewayClientRef.current || (gatewayClientRef.current as any)._viewerKeyUsed !== viewerKey) {
+      const client = new GatewayClient({
+        chain: "arcTestnet",
+        privateKey: viewerKey as `0x${string}`,
+        rpcUrl: "https://5042002.rpc.thirdweb.com",
+      });
+      (client as any)._viewerKeyUsed = viewerKey;
+      gatewayClientRef.current = client;
+    }
+    return gatewayClientRef.current;
+  };
+
   const [particles, setParticles] = useState<Array<{ id: number; text: string; x: number; y: number }>>([]);
   const [recentViewerPayments, setRecentViewerPayments] = useState<Array<{ id: string; amount: string; time: string; success: boolean }>>([]);
   const [errorMsg, setErrorMsg] = useState("");
@@ -407,13 +437,7 @@ export default function App() {
   const fetchViewerBalances = async () => {
     if (!viewerAddress) return;
     try {
-      const publicClient = createPublicClient({
-        chain: arcTestnet,
-        transport: fallback([
-          http(ARC_TESTNET_RPC),
-          http("https://5042002.rpc.thirdweb.com")
-        ]),
-      });
+      const publicClient = getPublicClient();
 
       // Wallet balance
       const balance = await publicClient.readContract({
@@ -433,11 +457,8 @@ export default function App() {
       setViewerWalletBalance(parseFloat(formatUnits(balance as bigint, 6)).toFixed(4));
 
       // Gateway balance
-      const gateway = new GatewayClient({
-        chain: "arcTestnet",
-        privateKey: viewerKey as `0x${string}`,
-        rpcUrl: "https://5042002.rpc.thirdweb.com",
-      });
+      const gateway = getGatewayClient();
+      if (!gateway) return;
       const balances = await gateway.getBalances();
       setViewerGatewayBalance(parseFloat(balances.gateway.formattedAvailable).toFixed(4));
     } catch (err) {
@@ -449,11 +470,8 @@ export default function App() {
     const creatorAddr = creatorAddrOverride || selectedCreator?.creatorAddress;
     if (!viewerKey || !creatorAddr) return;
     try {
-      const gateway = new GatewayClient({
-        chain: "arcTestnet",
-        privateKey: viewerKey as `0x${string}`,
-        rpcUrl: "https://5042002.rpc.thirdweb.com",
-      });
+      const gateway = getGatewayClient();
+      if (!gateway) return;
 
       const start = Date.now();
       const creator = streamsList.find(s => s.creatorAddress.toLowerCase() === creatorAddr.toLowerCase());
