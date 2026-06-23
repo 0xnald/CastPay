@@ -17,7 +17,7 @@ import {
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
+import { createPublicClient, createWalletClient, custom, http, fallback, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
 import { arcTestnet } from "viem/chains";
 
 // Monkeypatch EIP-3009 signature generation to add a 1-day (86400s) buffer to the validBefore timestamp.
@@ -409,7 +409,10 @@ export default function App() {
     try {
       const publicClient = createPublicClient({
         chain: arcTestnet,
-        transport: http(ARC_TESTNET_RPC),
+        transport: fallback([
+          http(ARC_TESTNET_RPC),
+          http("https://5042002.rpc.thirdweb.com")
+        ]),
       });
 
       // Wallet balance
@@ -433,6 +436,7 @@ export default function App() {
       const gateway = new GatewayClient({
         chain: "arcTestnet",
         privateKey: viewerKey as `0x${string}`,
+        rpcUrl: "https://5042002.rpc.thirdweb.com",
       });
       const balances = await gateway.getBalances();
       setViewerGatewayBalance(parseFloat(balances.gateway.formattedAvailable).toFixed(4));
@@ -448,6 +452,7 @@ export default function App() {
       const gateway = new GatewayClient({
         chain: "arcTestnet",
         privateKey: viewerKey as `0x${string}`,
+        rpcUrl: "https://5042002.rpc.thirdweb.com",
       });
 
       const start = Date.now();
@@ -544,7 +549,10 @@ export default function App() {
       });
       const publicClient = createPublicClient({
         chain: arcTestnet,
-        transport: custom((window as any).ethereum)
+        transport: fallback([
+          http(ARC_TESTNET_RPC),
+          http("https://5042002.rpc.thirdweb.com")
+        ])
       });
 
       // Check MetaMask USDC balance

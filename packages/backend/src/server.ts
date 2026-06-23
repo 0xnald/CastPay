@@ -4,7 +4,7 @@ import * as dotenv from "dotenv";
 import * as path from "path";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
-import { createPublicClient, http, formatUnits, erc20Abi } from "viem";
+import { createPublicClient, http, fallback, formatUnits, erc20Abi } from "viem";
 import { arcTestnet } from "viem/chains";
 
 // Load environment variables from the monorepo root
@@ -35,7 +35,10 @@ if (!sellerAddress || !sellerPrivateKey) {
 const facilitator = new BatchFacilitatorClient();
 const publicClient = createPublicClient({
   chain: arcTestnet,
-  transport: http(ARC_TESTNET_RPC),
+  transport: fallback([
+    http(ARC_TESTNET_RPC),
+    http("https://5042002.rpc.thirdweb.com")
+  ]),
 });
 
 // App State
