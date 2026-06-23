@@ -263,7 +263,7 @@ export default function App() {
     fetchBackendStats();
     const interval = setInterval(fetchBackendStats, 3000);
     return () => clearInterval(interval);
-  }, [activeTab, connectedAddress, selectedCreator]);
+  }, [activeTab, connectedAddress, selectedCreator?.creatorAddress]);
 
   // Fetch active streams list periodically
   useEffect(() => {
@@ -285,7 +285,14 @@ export default function App() {
                 setErrorMsg("The creator has stopped their live stream.");
               }
             } else {
-              setSelectedCreator(stillLive);
+              // Only update state if fields have changed, protecting reference stability
+              if (
+                stillLive.ratePerSecond !== selectedCreator.ratePerSecond ||
+                stillLive.creatorName !== selectedCreator.creatorName ||
+                stillLive.creatorAddress !== selectedCreator.creatorAddress
+              ) {
+                setSelectedCreator(stillLive);
+              }
             }
           }
           setHasLoadedStreams(true);
@@ -298,7 +305,7 @@ export default function App() {
     fetchActiveStreams();
     const interval = setInterval(fetchActiveStreams, 3000);
     return () => clearInterval(interval);
-  }, [selectedCreator, hasLoadedStreams]);
+  }, [selectedCreator?.creatorAddress, hasLoadedStreams]);
 
   // Handle URL query parameters for shareable creator link on mount
   useEffect(() => {
@@ -391,7 +398,7 @@ export default function App() {
         videoRef.current.src = "";
       }
     }
-  }, [isPlaying, selectedCreator, viewerAddress]);
+  }, [isPlaying, selectedCreator?.creatorAddress, viewerAddress]);
 
   // Heartbeat loop when streaming
   useEffect(() => {
@@ -409,7 +416,7 @@ export default function App() {
         clearInterval(heartbeatIntervalRef.current);
       }
     };
-  }, [isPlaying, viewerKey, streamRate, selectedCreator]);
+  }, [isPlaying, viewerKey, streamRate, selectedCreator?.creatorAddress]);
 
   const fetchBackendStats = async () => {
     try {
