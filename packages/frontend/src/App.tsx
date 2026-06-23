@@ -15,7 +15,7 @@ import {
   UserCheck
 } from "lucide-react";
 import Hls from "hls.js";
-import { GatewayClient, CHAIN_CONFIGS, SupportedChainName } from "@circle-fin/x402-batching/client";
+import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { createPublicClient, createWalletClient, custom, http, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
 import { arcTestnet } from "viem/chains";
@@ -129,7 +129,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"viewer" | "creator">("viewer");
   
   // App States
-  const [streamUrl, setStreamUrl] = useState("https://demo.owncast.online/hls/stream.m3u8");
   const [isPlaying, setIsPlaying] = useState(false);
   const [streamRate, setStreamRate] = useState(0.0001); // USDC per second
   const [backendStatus, setBackendStatus] = useState<"online" | "offline">("offline");
@@ -162,12 +161,21 @@ export default function App() {
   });
   
   const [newRate, setNewRate] = useState("0.0001");
-  const [isConfiguringRate, setIsConfiguringRate] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("0.10");
   const [withdrawChain, setWithdrawChain] = useState("arcTestnet");
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [isRegisteringCreator, setIsRegisteringCreator] = useState(false);
+
+  // Multi-tenant streaming states
+  const [streamsList, setStreamsList] = useState<Array<{ creatorAddress: string; creatorName: string; ratePerSecond: number }>>([]);
+  const [selectedCreator, setSelectedCreator] = useState<{ creatorAddress: string; creatorName: string; ratePerSecond: number } | null>(null);
+  const [hasLoadedStreams, setHasLoadedStreams] = useState(false);
+  
+  // Creator console broadcaster states
+  const [creatorNameInput, setCreatorNameInput] = useState("");
+  const [owncastUrlInput, setOwncastUrlInput] = useState("https://demo.owncast.online/hls/stream.m3u8");
+  const [isStreamActive, setIsStreamActive] = useState(false);
 
   // Refs & Particle States
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -204,7 +212,68 @@ export default function App() {
     fetchBackendStats();
     const interval = setInterval(fetchBackendStats, 3000);
     return () => clearInterval(interval);
+  }, [activeTab, connectedAddress, selectedCreator]);
+
+  // Fetch active streams list periodically
+  useEffect(() => {
+    const fetchActiveStreams = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/streams`);
+        if (res.ok) {
+          const data = await res.json();
+          setStreamsList(data);
+          
+          if (selectedCreator) {
+            const stillLive = data.find(
+              (s: any) => s.creatorAddress.toLowerCase() === selectedCreator.creatorAddress.toLowerCase()
+            );
+            if (!stillLive) {
+              if (hasLoadedStreams) {
+                setSelectedCreator(null);
+                setIsPlaying(false);
+                setErrorMsg("The creator has stopped their live stream.");
+              }
+            } else {
+              setSelectedCreator(stillLive);
+            }
+          }
+          setHasLoadedStreams(true);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch active streams:", err);
+      }
+    };
+
+    fetchActiveStreams();
+    const interval = setInterval(fetchActiveStreams, 3000);
+    return () => clearInterval(interval);
+  }, [selectedCreator, hasLoadedStreams]);
+
+  // Handle URL query parameters for shareable creator link on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const creatorParam = params.get("creator");
+    if (creatorParam) {
+      setSelectedCreator({
+        creatorAddress: creatorParam,
+        creatorName: "Direct Link Creator",
+        ratePerSecond: 0.0001
+      });
+      setActiveTab("viewer");
+    }
   }, []);
+
+  // Check if connected creator is already live on backend
+  useEffect(() => {
+    if (connectedAddress && streamsList.length > 0) {
+      const active = streamsList.find(s => s.creatorAddress.toLowerCase() === connectedAddress.toLowerCase());
+      if (active) {
+        setIsStreamActive(true);
+        setCreatorNameInput(active.creatorName);
+        setNewRate(active.ratePerSecond.toString());
+      }
+    }
+  }, [connectedAddress, streamsList]);
 
   // Auto-connect MetaMask wallet if already authorized
   useEffect(() => {
@@ -250,15 +319,16 @@ export default function App() {
   // Video stream mounting
   useEffect(() => {
     if (videoRef.current) {
-      if (isPlaying) {
+      if (isPlaying && selectedCreator) {
+        const proxyStreamUrl = `${BACKEND_URL}/api/stream/${selectedCreator.creatorAddress}/index.m3u8?viewer=${viewerAddress}`;
         if (Hls.isSupported()) {
           const hls = new Hls();
-          hls.loadSource(streamUrl);
+          hls.loadSource(proxyStreamUrl);
           hls.attachMedia(videoRef.current);
           hlsRef.current = hls;
           videoRef.current.play().catch(err => console.log("Video auto play prevented", err));
         } else if (videoRef.current.canPlayType("application/vnd.apple.mpegurl")) {
-          videoRef.current.src = streamUrl;
+          videoRef.current.src = proxyStreamUrl;
           videoRef.current.play().catch(err => console.log("Video auto play prevented", err));
         }
       } else {
@@ -270,13 +340,13 @@ export default function App() {
         videoRef.current.src = "";
       }
     }
-  }, [isPlaying, streamUrl]);
+  }, [isPlaying, selectedCreator, viewerAddress]);
 
   // Heartbeat loop when streaming
   useEffect(() => {
-    if (isPlaying) {
+    if (isPlaying && selectedCreator) {
       // Start heartbeat every 2 seconds
-      heartbeatIntervalRef.current = setInterval(sendHeartbeat, 2000);
+      heartbeatIntervalRef.current = setInterval(() => sendHeartbeat(), 2000);
     } else {
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
@@ -288,11 +358,18 @@ export default function App() {
         clearInterval(heartbeatIntervalRef.current);
       }
     };
-  }, [isPlaying, viewerKey, streamRate]);
+  }, [isPlaying, viewerKey, streamRate, selectedCreator]);
 
   const fetchBackendStats = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/stats`);
+      let url = `${BACKEND_URL}/api/stats`;
+      if (activeTab === "creator" && connectedAddress) {
+        url += `?creator=${connectedAddress}`;
+      } else if (activeTab === "viewer" && selectedCreator) {
+        url += `?creator=${selectedCreator.creatorAddress}`;
+      }
+      
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setCreatorStats(data);
@@ -343,8 +420,9 @@ export default function App() {
     }
   };
 
-  const sendHeartbeat = async () => {
-    if (!viewerKey) return;
+  const sendHeartbeat = async (creatorAddrOverride?: string) => {
+    const creatorAddr = creatorAddrOverride || selectedCreator?.creatorAddress;
+    if (!viewerKey || !creatorAddr) return;
     try {
       const gateway = new GatewayClient({
         chain: "arcTestnet",
@@ -352,10 +430,12 @@ export default function App() {
       });
 
       const start = Date.now();
-      const heartbeatPrice = (streamRate * 2).toFixed(6);
+      const creator = streamsList.find(s => s.creatorAddress.toLowerCase() === creatorAddr.toLowerCase());
+      const rate = creator ? creator.ratePerSecond : streamRate;
+      const heartbeatPrice = (rate * 2).toFixed(6);
 
-      // Call gateway.pay which handles 402 challange response automatically
-      const result = await gateway.pay(`${BACKEND_URL}/api/heartbeat`, { method: "POST" });
+      // Call gateway.pay which handles 402 challenge response automatically
+      const result = await gateway.pay(`${BACKEND_URL}/api/heartbeat?creator=${creatorAddr}`, { method: "POST" });
       const duration = Date.now() - start;
       console.log(`Heartbeat settled in ${duration}ms, tx: ${result.transaction}`);
 
@@ -380,15 +460,34 @@ export default function App() {
       setErrorMsg(`Payment failed: ${(err as Error).message}`);
       setIsPlaying(false); // Stop playback on billing failure
 
+      const creator = streamsList.find(s => s.creatorAddress.toLowerCase() === creatorAddr.toLowerCase());
+      const rate = creator ? creator.ratePerSecond : streamRate;
+      const heartbeatPrice = (rate * 2).toFixed(6);
+
       setRecentViewerPayments(prev => [
         {
           id: `tx_${Date.now()}`,
-          amount: (streamRate * 2).toFixed(6),
+          amount: heartbeatPrice,
           time: new Date().toLocaleTimeString(),
           success: false
         },
         ...prev.slice(0, 9)
       ]);
+      throw err;
+    }
+  };
+
+  const handleStartPlaying = async () => {
+    if (!selectedCreator) return;
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      setSuccessMsg("Authorizing stream access with initial heartbeat...");
+      await sendHeartbeat(selectedCreator.creatorAddress);
+      setIsPlaying(true);
+      setSuccessMsg("Stream authorized successfully!");
+    } catch (err: any) {
+      setErrorMsg(`Failed to authorize stream: ${err.message || err.toString()}`);
     }
   };
 
@@ -479,30 +578,6 @@ export default function App() {
     }
   };
 
-  const handleConfigureRate = async () => {
-    if (isConfiguringRate) return;
-    setErrorMsg("");
-    setSuccessMsg("");
-    setIsConfiguringRate(true);
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/configure`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rate: parseFloat(newRate) }),
-      });
-      if (res.ok) {
-        setSuccessMsg("Streaming billing rate updated successfully!");
-        fetchBackendStats();
-      } else {
-        const data = await res.json();
-        setErrorMsg(`Failed: ${data.error}`);
-      }
-    } catch (err) {
-      setErrorMsg("Failed to configure rate");
-    } finally {
-      setIsConfiguringRate(false);
-    }
-  };
 
   const handleWithdraw = async () => {
     if (!connectedAddress) {
@@ -693,6 +768,93 @@ export default function App() {
       }
     } catch (e) {
       setErrorMsg("Creator registration request failed.");
+    } finally {
+      setIsRegisteringCreator(false);
+    }
+  };
+
+  const handleGoLive = async () => {
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
+      return;
+    }
+    if (!creatorNameInput.trim()) {
+      setErrorMsg("Please enter your display name.");
+      return;
+    }
+    if (!owncastUrlInput.trim()) {
+      setErrorMsg("Please enter your Owncast HLS stream URL.");
+      return;
+    }
+    const billingRate = parseFloat(newRate);
+    if (isNaN(billingRate) || billingRate <= 0) {
+      setErrorMsg("Please enter a valid positive billing rate.");
+      return;
+    }
+
+    setIsRegisteringCreator(true);
+    setErrorMsg("");
+    setSuccessMsg("");
+    try {
+      // 1. Register wallet with the backend
+      const regRes = await fetch(`${BACKEND_URL}/api/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: connectedAddress }),
+      });
+      if (!regRes.ok) {
+        const data = await regRes.json();
+        throw new Error(data.error || "Failed to register creator wallet.");
+      }
+
+      // 2. Register stream in the active registry
+      const streamRes = await fetch(`${BACKEND_URL}/api/streams/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: connectedAddress,
+          name: creatorNameInput,
+          streamUrl: owncastUrlInput,
+          rate: billingRate,
+        }),
+      });
+
+      if (streamRes.ok) {
+        setSuccessMsg(`Congratulations! You are now live as ${creatorNameInput}!`);
+        setIsStreamActive(true);
+        fetchBackendStats();
+      } else {
+        const data = await streamRes.json();
+        throw new Error(data.error || "Failed to register live stream.");
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || "Failed to go live.");
+    } finally {
+      setIsRegisteringCreator(false);
+    }
+  };
+
+  const handleStopLive = async () => {
+    if (!connectedAddress) return;
+    setErrorMsg("");
+    setSuccessMsg("");
+    setIsRegisteringCreator(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/streams/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: connectedAddress }),
+      });
+      if (res.ok) {
+        setSuccessMsg("You have stopped your stream and gone offline.");
+        setIsStreamActive(false);
+        fetchBackendStats();
+      } else {
+        const data = await res.json();
+        setErrorMsg(`Failed to stop stream: ${data.error}`);
+      }
+    } catch (err) {
+      setErrorMsg("Failed to stop stream.");
     } finally {
       setIsRegisteringCreator(false);
     }
@@ -937,87 +1099,158 @@ export default function App() {
           /* VIEWERS PORTAL TAB                                                       */
           /* ========================================================================= */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left/Middle: Stream Player Card */}
+            {/* Left/Middle: Stream Player Card or Streamer Directory */}
             <div className="lg:col-span-2 flex flex-col gap-6">
-              <div className="glass-panel overflow-hidden relative">
-                {/* Streaming Header bar */}
-                <div className="px-5 py-3.5 border-b border-gold-muted flex items-center justify-between bg-card-bg">
-                  <div className="flex items-center gap-2">
-                    <span className="pulse-dot"></span>
-                    <span className="text-sm font-semibold tracking-wide uppercase">Owncast Live Stream</span>
+              {selectedCreator ? (
+                <div className="glass-panel overflow-hidden relative">
+                  {/* Streaming Header bar */}
+                  <div className="px-5 py-3.5 border-b border-gold-muted flex items-center justify-between bg-card-bg">
+                    <div className="flex items-center gap-2">
+                      <span className="pulse-dot bg-[#60a5fa]"></span>
+                      <span className="text-sm font-semibold tracking-wide uppercase">
+                        Watching: {selectedCreator.creatorName}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsPlaying(false);
+                        setSelectedCreator(null);
+                      }}
+                      className="text-xs text-gold-accent hover:text-gold-bright flex items-center gap-1 bg-transparent border-0 cursor-pointer"
+                    >
+                      ← Back to Directory
+                    </button>
                   </div>
-                  <div className="text-xs text-secondary flex items-center gap-2">
-                    <Activity className="w-3.5 h-3.5 text-gold-accent" />
-                    <span>Rate: <strong className="text-gold-bright">{(streamRate * 2).toFixed(4)} USDC</strong> / 2s</span>
+
+                  {/* Video container */}
+                  <div className="relative aspect-video bg-black flex items-center justify-center">
+                    {isPlaying ? (
+                      <video 
+                        ref={videoRef}
+                        className="w-full h-full object-contain"
+                        controls={false}
+                        playsInline
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center gap-4 text-center px-6">
+                        <Tv className="w-12 h-12 text-gold-muted" />
+                        <div>
+                          <h3 className="font-serif text-2xl text-gold-accent">Pay-Per-Second Stream Gating</h3>
+                          <p className="text-xs text-secondary max-w-sm mt-1">
+                            Authorize streaming micropayments with your Gateway balance to watch <strong>{selectedCreator.creatorName}</strong>.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Billing particles overlay */}
+                    {particles.map(p => (
+                      <div 
+                        key={p.id}
+                        className="particle"
+                        style={{ left: `${p.x}%`, top: `${p.y}%` }}
+                      >
+                        {p.text}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Player actions panel */}
+                  <div className="p-5 flex flex-col sm:flex-row gap-4 justify-between items-center bg-[#0d0b09]">
+                    <div className="text-xs text-secondary flex-grow">
+                      <div>Rate: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 2).toFixed(4)} USDC</strong> / 2s</div>
+                      <div className="mt-0.5">Creator Wallet: <span className="font-mono">{selectedCreator.creatorAddress.slice(0, 10)}...{selectedCreator.creatorAddress.slice(-8)}</span></div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        if (isPlaying) {
+                          setIsPlaying(false);
+                        } else {
+                          handleStartPlaying();
+                        }
+                      }}
+                      disabled={!viewerGatewayBalance || parseFloat(viewerGatewayBalance) <= 0}
+                      className={`w-full sm:w-auto btn-gold px-6 ${isPlaying ? "bg-red-400 text-black hover:bg-red-300" : ""}`}
+                    >
+                      {isPlaying ? (
+                        <>
+                          <Pause className="w-4 h-4 fill-current" />
+                          Pause Stream
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 fill-current" />
+                          Pay & Watch
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  
+                  {/* Shareable link card */}
+                  <div className="p-4 border-t border-gold-muted bg-[#0c0a08]/40 flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-semibold text-secondary">Share this Stream:</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[10px] text-gold-muted select-all">
+                        {`${window.location.origin}/?creator=${selectedCreator.creatorAddress}`}
+                      </span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/?creator=${selectedCreator.creatorAddress}`);
+                          setSuccessMsg("Shareable link copied to clipboard!");
+                        }}
+                        className="text-[10px] border border-gold-muted px-2 py-1 rounded hover:border-gold-accent text-gold-accent hover:text-gold-bright transition-all bg-[#0f0e0b]"
+                      >
+                        Copy Link
+                      </button>
+                    </div>
                   </div>
                 </div>
+              ) : (
+                <div className="glass-panel p-6 flex flex-col gap-6">
+                  <div>
+                    <h3 className="font-serif text-2xl text-gold-accent">Live Streams Directory</h3>
+                    <p className="text-xs text-secondary mt-1">Select a creator below to start watching their gated live stream on the big screen.</p>
+                  </div>
 
-                {/* Video container */}
-                <div className="relative aspect-video bg-black flex items-center justify-center">
-                  {isPlaying ? (
-                    <video 
-                      ref={videoRef}
-                      className="w-full h-full object-contain"
-                      controls={false}
-                      playsInline
-                    />
+                  {streamsList.length === 0 ? (
+                    <div className="text-center py-12 border border-dashed border-gold-muted rounded-xl bg-[#0c0a08]/30">
+                      <Tv className="w-12 h-12 text-gold-muted mx-auto mb-3" />
+                      <p className="text-sm text-secondary">No creators are currently live.</p>
+                      <p className="text-[11px] text-secondary/60 mt-1">Check back later or go live from the Creator Console!</p>
+                    </div>
                   ) : (
-                    <div className="flex flex-col items-center gap-4 text-center px-6">
-                      <Tv className="w-12 h-12 text-gold-muted" />
-                      <div>
-                        <h3 className="font-serif text-2xl text-gold-accent">Pay-Per-Second Portal</h3>
-                        <p className="text-xs text-secondary max-w-sm mt-1">
-                          Authorize streaming micropayments with your Gateway balance to watch this premium live stream.
-                        </p>
-                      </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {streamsList.map((stream) => (
+                        <div key={stream.creatorAddress} className="border border-gold-muted/30 rounded-xl p-5 bg-[#0d0b09] hover:border-gold-accent/40 transition-all flex flex-col justify-between gap-4">
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                Live
+                              </span>
+                              <span className="text-[10px] text-secondary font-mono">{stream.creatorAddress.slice(0, 6)}...{stream.creatorAddress.slice(-4)}</span>
+                            </div>
+                            <h4 className="font-serif text-lg text-gold-bright">{stream.creatorName}</h4>
+                            <p className="text-xs text-secondary mt-1">
+                              Rate: <strong className="text-gold-accent">{(stream.ratePerSecond * 2).toFixed(4)} USDC</strong> / 2s
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedCreator(stream);
+                              setIsPlaying(false);
+                            }}
+                            className="w-full btn-gold text-xs py-2 justify-center"
+                          >
+                            Watch Stream
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
-
-                  {/* Billing particles overlay */}
-                  {particles.map(p => (
-                    <div 
-                      key={p.id}
-                      className="particle"
-                      style={{ left: `${p.x}%`, top: `${p.y}%` }}
-                    >
-                      {p.text}
-                    </div>
-                  ))}
                 </div>
-
-                {/* Player actions panel */}
-                <div className="p-5 flex flex-col sm:flex-row gap-4 justify-between items-center bg-[#0d0b09]">
-                  <div className="w-full sm:w-2/3">
-                    <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">HLS Video Stream URL</label>
-                    <input 
-                      type="text"
-                      value={streamUrl}
-                      onChange={(e) => setStreamUrl(e.target.value)}
-                      disabled={isPlaying}
-                      className="input-field text-xs"
-                      placeholder="e.g. https://demo.owncast.online/hls/stream.m3u8"
-                    />
-                  </div>
-
-                  <button
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    disabled={!viewerGatewayBalance || parseFloat(viewerGatewayBalance) <= 0}
-                    className={`w-full sm:w-auto btn-gold px-6 ${isPlaying ? "bg-red-400 text-black hover:bg-red-300" : ""}`}
-                  >
-                    {isPlaying ? (
-                      <>
-                        <Pause className="w-4 h-4 fill-current" />
-                        Disconnect
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-4 h-4 fill-current" />
-                        Pay & Watch
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+              )}
 
               {/* Viewer Payment Activity History */}
               <div className="glass-panel p-6">
@@ -1323,22 +1556,22 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Creator Settings card */}
+              {/* Creator Settings / Go Live card */}
               <div className="glass-panel p-6">
                 <h3 className="text-xl mb-4 border-b border-gold-muted pb-3 flex items-center gap-2">
                   <Settings className="w-4.5 h-4.5 text-gold-accent" />
-                  Stream Configuration
+                  Broadcaster Console
                 </h3>
 
                 {/* Creator Address Display */}
                 <div className="mb-4">
-                  <label className="text-[10px] uppercase font-semibold text-secondary block">Creator Wallet (Receives Funds)</label>
+                  <label className="text-[10px] uppercase font-semibold text-secondary block">Creator Wallet Address</label>
                   <div className="font-mono text-[10px] text-secondary truncate mt-1 bg-[#0f0e0b] p-2 rounded border border-gold-muted/10 mb-2">
                     {creatorStats.sellerAddress}
                   </div>
                   
                   <div className="flex justify-between items-center text-xs mt-2 bg-[#0f0e0b]/50 p-2 rounded border border-gold-muted/10">
-                    <span className="text-secondary font-medium">Creator Gas Balance:</span>
+                    <span className="text-secondary font-medium">Gas Balance:</span>
                     <strong className={parseFloat(creatorStats.gasBalance) < 0.005 ? "text-[#f87171] font-mono" : "text-[#4ade80] font-mono"}>
                       {parseFloat(creatorStats.gasBalance).toFixed(4)} USDC
                     </strong>
@@ -1346,7 +1579,7 @@ export default function App() {
                   
                   {parseFloat(creatorStats.gasBalance) < 0.005 && (
                     <div className="mt-2.5 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 leading-normal">
-                      ⚠️ Creator has insufficient gas for withdrawals. Please use the button below to fund the creator wallet.
+                      ⚠️ Low gas warning. Please fund your wallet.
                     </div>
                   )}
 
@@ -1362,30 +1595,117 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Rate setup */}
-                <div className="mb-4">
-                  <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Stream Billing Rate (USDC/sec)</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="number"
-                      step="0.00001"
-                      value={newRate}
-                      onChange={(e) => setNewRate(e.target.value)}
-                      className="input-field text-sm"
-                      placeholder="e.g. 0.0001"
-                    />
+                {!isStreamActive ? (
+                  <div className="flex flex-col gap-4 border-t border-gold-muted pt-4">
+                    <h4 className="text-xs uppercase font-semibold text-secondary">Go Live Setup</h4>
+                    
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Display Name</label>
+                      <input 
+                        type="text"
+                        value={creatorNameInput}
+                        onChange={(e) => setCreatorNameInput(e.target.value)}
+                        className="input-field text-xs"
+                        placeholder="e.g. Alice Stream"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Secret Owncast HLS Stream URL</label>
+                      <input 
+                        type="text"
+                        value={owncastUrlInput}
+                        onChange={(e) => setOwncastUrlInput(e.target.value)}
+                        className="input-field text-xs"
+                        placeholder="e.g. https://your-owncast-server.com/hls/stream.m3u8"
+                      />
+                      <span className="text-[9px] text-secondary mt-1 block">
+                        Never exposed to viewers. Kept secure on backend.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Billing Rate (USDC/sec)</label>
+                      <input 
+                        type="number"
+                        step="0.00001"
+                        value={newRate}
+                        onChange={(e) => setNewRate(e.target.value)}
+                        className="input-field text-xs"
+                        placeholder="e.g. 0.0001"
+                      />
+                      <span className="text-[9px] text-secondary mt-1 block">
+                        Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> per 2-second heartbeat
+                      </span>
+                    </div>
+
                     <button
-                      onClick={handleConfigureRate}
-                      disabled={isConfiguringRate || !newRate}
-                      className="btn-gold px-4 text-xs font-semibold"
+                      onClick={handleGoLive}
+                      disabled={isRegisteringCreator || !connectedAddress}
+                      className="w-full btn-gold text-xs justify-center py-2.5 mt-2"
                     >
-                      Update
+                      {isRegisteringCreator ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Going Live...
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4.5 h-4.5 fill-current" />
+                          Go Live
+                        </>
+                      )}
                     </button>
                   </div>
-                  <span className="text-[10px] text-secondary block mt-1.5">
-                    Current: <strong className="text-gold-bright">{(streamRate * 2).toFixed(5)} USDC</strong> per 2-second heartbeat
-                  </span>
-                </div>
+                ) : (
+                  <div className="flex flex-col gap-4 border-t border-gold-muted pt-4 bg-[#0a0907]/50 p-4 rounded-xl border border-gold-muted/10">
+                    <div className="flex items-center gap-2">
+                      <span className="pulse-dot bg-[#4ade80]"></span>
+                      <span className="text-xs font-semibold text-[#4ade80] uppercase">Stream Active</span>
+                    </div>
+                    
+                    <div className="text-xs text-secondary">
+                      <div>Name: <strong className="text-gold-bright">{creatorNameInput}</strong></div>
+                      <div className="mt-1">Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> / 2s</div>
+                    </div>
+
+                    <div className="border-t border-gold-muted/30 pt-3">
+                      <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Shareable Stream Link:</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[9px] text-gold-muted truncate flex-grow bg-[#0f0e0b] p-1.5 rounded border border-gold-muted/10">
+                          {`${window.location.origin}/?creator=${connectedAddress}`}
+                        </span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(`${window.location.origin}/?creator=${connectedAddress}`);
+                            setSuccessMsg("Copied shareable link to clipboard!");
+                          }}
+                          className="text-[9px] border border-gold-muted px-2 py-1.5 rounded hover:border-gold-accent text-gold-accent hover:text-gold-bright transition-all bg-[#0f0e0b]"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleStopLive}
+                      disabled={isRegisteringCreator}
+                      className="w-full bg-red-400 text-black hover:bg-red-300 font-semibold text-xs justify-center py-2.5 rounded-lg flex items-center gap-1.5 transition-all mt-2"
+                    >
+                      {isRegisteringCreator ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Stopping...
+                        </>
+                      ) : (
+                        <>
+                          <Pause className="w-4 h-4 fill-current" />
+                          Stop Stream
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Cross-chain Withdrawals card */}
