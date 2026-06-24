@@ -16,3 +16,4 @@ out/
 .docusaurus/
 .DS_Store
 *.pem
+state.json
