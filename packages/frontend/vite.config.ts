@@ -14,8 +14,12 @@ export default defineConfig({
       protocolImports: true,
     }),
   ],
+  define: {
+    "process.env.RPC": JSON.stringify(process.env.RPC || "https://rpc.testnet.arc.network"),
+  },
   server: {
     port: 3000,
     host: true,
   },
 });
+
