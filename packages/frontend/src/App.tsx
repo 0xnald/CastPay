@@ -13,7 +13,8 @@ import {
   Activity,
   UserCheck,
   Copy,
-  LogOut
+  LogOut,
+  BookOpen
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
@@ -1232,69 +1233,117 @@ export default function App() {
           </div>
         </div>
 
-        {/* Features & Developer API Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
-          {/* Features cards */}
-          <div className="flex flex-col gap-6">
-            <div className="landing-card">
-              <h4 className="font-serif text-2xl text-gold-bright mb-2">Non-Custodial Flow</h4>
+        {/* GitBook-style Developer Footer */}
+        <footer className="gitbook-footer">
+          <div className="footer-grid">
+            {/* Left Column: Brand & Docs Card */}
+            <div className="footer-brand-col">
+              <div className="flex items-center gap-2">
+                <img 
+                  src="/logo.png" 
+                  alt="CastPay Logo" 
+                  className="footer-logo-img" 
+                />
+                <span className="font-serif text-xl tracking-wide font-medium">CastPay</span>
+              </div>
               <p className="text-xs text-secondary leading-relaxed">
-                Zero custodial keys. Viewers pre-fund an ephemeral local session wallet, authorizing continuous background payments while they watch, with no annoying MetaMask popups during playback.
+                Secure, non-custodial pay-per-second content monetization powered by Circle Gateway and Arc L1.
               </p>
-            </div>
-            
-            <div className="landing-card">
-              <h4 className="font-serif text-2xl text-gold-bright mb-2">Cross-Chain Settlements</h4>
-              <p className="text-xs text-secondary leading-relaxed">
-                Withdraw funds to Arbitrum, Base, Optimism, Avalanche, Polygon, or Ethereum Mainnet. Built on top of Circle Gateway API, utilizing EIP-712 BurnIntents and cross-chain mint authorizations.
-              </p>
-            </div>
-            
-            <div className="landing-card">
-              <h4 className="font-serif text-2xl text-gold-bright mb-2">1.5% Platform Take Rate</h4>
-              <p className="text-xs text-secondary leading-relaxed">
-                A minimal take-rate is automatically appended to the billing stream. Viewers pay the fee-inclusive rate, and fees are securely separated and routed to the platform wallet upon creator withdrawal.
-              </p>
-            </div>
-          </div>
-
-          {/* Developer API mock panel */}
-          <div className="glass-panel p-6 flex flex-col bg-[#0b0a08]/80 border border-gold-muted/20 relative">
-            <div className="absolute top-3 right-3 flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]"></span>
-              <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]"></span>
-            </div>
-            <div className="text-[10px] uppercase font-semibold text-secondary mb-4 select-none">Developer Quickstart API</div>
-            <div className="font-mono text-xs text-secondary leading-relaxed flex-grow select-all">
-              <div className="text-[#a3a099] mb-1">// 1. Install CastPay SDK</div>
-              <div className="text-[#e2e8f0] mb-3">npm install @circle-fin/x402-batching</div>
-              
-              <div className="text-[#a3a099] mb-1">// 2. Initialize non-custodial gateway client</div>
-              <div>
-                <span className="text-gold-bright">const </span>client = <span className="text-gold-bright">new </span><span className="text-[#60a5fa]">GatewayClient</span>({`{`}
-              </div>
-              <div className="pl-4">
-                chain: <span className="text-emerald-400">"arcTestnet"</span>,
-              </div>
-              <div className="pl-4">
-                privateKey: viewerSessionKey
-              </div>
-              <div className="mb-3">{`});`}</div>
-
-              <div className="text-[#a3a099] mb-1">// 3. Establish pay-per-second billing session</div>
-              <div>
-                <span className="text-gold-bright">await </span>client.<span className="text-[#60a5fa]">pay</span>(<span className="text-emerald-400">"https://api.castpay.live/api/heartbeat?creator=0x..."</span>);
-              </div>
-            </div>
-            <div className="border-t border-gold-muted/20 pt-4 mt-4 flex justify-between items-center text-xs text-secondary">
-              <span>Read the integration guidelines</span>
-              <a href="https://github.com/circlefin" target="_blank" rel="noopener noreferrer" className="text-gold-accent hover:text-gold-bright inline-flex items-center gap-1">
-                API Reference <ExternalLink className="w-3.5 h-3.5" />
+              <a 
+                href="https://github.com/circlefin" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="docs-card"
+              >
+                <div>
+                  <div className="docs-card-title">
+                    <BookOpen className="w-4 h-4 text-gold-accent" />
+                    Explore Docs
+                  </div>
+                  <div className="docs-card-desc">Explore developer integration guides</div>
+                </div>
+                <ArrowUpRight className="w-4 h-4 text-secondary" />
               </a>
             </div>
+
+            {/* Products Column */}
+            <div>
+              <h5 className="footer-col-title">Products</h5>
+              <ul className="footer-links-list">
+                <li>
+                  <button onClick={() => setActiveTab("viewer")} className="footer-link-item bg-transparent border-0 p-0 cursor-pointer">
+                    Viewer Portal
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => setActiveTab("creator")} className="footer-link-item bg-transparent border-0 p-0 cursor-pointer">
+                    Creator Console
+                  </button>
+                </li>
+                <li><span className="footer-link-item opacity-50 cursor-default">Cross-Chain Payouts</span></li>
+              </ul>
+            </div>
+
+            {/* Protocol Column */}
+            <div>
+              <h5 className="footer-col-title">Protocol</h5>
+              <ul className="footer-links-list">
+                <li><span className="footer-link-item opacity-50 cursor-default">GatewayWallet Contract</span></li>
+                <li><span className="footer-link-item opacity-50 cursor-default">Cross-Chain Relayer</span></li>
+                <li>
+                  <a href="https://testnet.arcscan.app" target="_blank" rel="noopener noreferrer" className="footer-link-item">
+                    Arc Testnet Scan
+                  </a>
+                </li>
+                <li>
+                  <a href="https://faucet.circle.com" target="_blank" rel="noopener noreferrer" className="footer-link-item">
+                    Circle Faucet
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            {/* Developers Column */}
+            <div>
+              <h5 className="footer-col-title">Developers</h5>
+              <ul className="footer-links-list">
+                <li><span className="footer-link-item opacity-50 cursor-default">API Reference</span></li>
+                <li><span className="footer-link-item opacity-50 cursor-default">EIP-3009 Spec</span></li>
+                <li>
+                  <a href="https://github.com/circlefin" target="_blank" rel="noopener noreferrer" className="footer-link-item">
+                    GitHub Repository
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            {/* Socials Column */}
+            <div>
+              <h5 className="footer-col-title">Socials</h5>
+              <ul className="footer-links-list">
+                <li><a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="footer-link-item">X / Twitter</a></li>
+                <li><a href="https://discord.com" target="_blank" rel="noopener noreferrer" className="footer-link-item">Discord</a></li>
+                <li><a href="https://telegram.org" target="_blank" rel="noopener noreferrer" className="footer-link-item">Telegram</a></li>
+              </ul>
+            </div>
           </div>
-        </div>
+
+          {/* Bottom Toolbar */}
+          <div className="footer-bottom-toolbar">
+            <div className="flex items-center">
+              {/* Status Dot Indicator relocated from Header */}
+              <div className="footer-status-indicator">
+                <span className={`status-dot ${backendStatus === "online" ? "active" : "inactive"}`}></span>
+                <span className="text-[11px] uppercase tracking-wider font-semibold">
+                  {backendStatus === "online" ? "System Online" : "System Offline"}
+                </span>
+              </div>
+            </div>
+            <div className="text-[11px] text-secondary font-medium">
+              © 2026 CastPay Labs. Built for streamers.
+            </div>
+          </div>
+        </footer>
       </div>
     );
   };
@@ -1309,9 +1358,10 @@ export default function App() {
             className="flex items-center gap-3 cursor-pointer select-none group"
           >
             <img 
-              src="/logo.jpg" 
+              src="/logo.png" 
               alt="CastPay Logo" 
-              className="w-8 h-8 rounded-lg object-cover border border-gold-muted/30 group-hover:border-gold-accent transition-all"
+              style={{ width: "32px", height: "32px", borderRadius: "6px", objectFit: "contain" }}
+              className="border border-gold-muted/30 group-hover:border-gold-accent transition-all"
             />
             <div>
               <span className="font-serif text-2xl tracking-wide font-medium group-hover:text-gold-bright transition-all">CastPay</span>
@@ -1320,18 +1370,6 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            {backendStatus === "online" ? (
-              <span className="text-xs text-[#60a5fa] bg-[#60a5fa]/10 px-2.5 py-1 rounded-full flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#60a5fa] animate-pulse"></span>
-                Backend Active
-              </span>
-            ) : (
-              <span className="text-xs text-red-400 bg-red-400/10 px-2.5 py-1 rounded-full flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
-                Backend Offline
-              </span>
-            )}
-            
             {connectedAddress ? (
               <div className="relative" ref={dropdownRef}>
                 <button 
@@ -1384,27 +1422,6 @@ export default function App() {
                 Connect Wallet
               </button>
             )}
-
-            <div className="flex p-0.5 bg-[#14120f] border border-gold-muted rounded-lg">
-              <button 
-                onClick={() => setActiveTab("landing")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "landing" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
-              >
-                Home
-              </button>
-              <button 
-                onClick={() => setActiveTab("viewer")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "viewer" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
-              >
-                Viewer Portal
-              </button>
-              <button 
-                onClick={() => setActiveTab("creator")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === "creator" ? "bg-gold-accent text-bg-color" : "text-secondary hover:text-white"}`}
-              >
-                Creator Console
-              </button>
-            </div>
           </div>
         </div>
       </header>
