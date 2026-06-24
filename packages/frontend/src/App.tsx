@@ -246,7 +246,7 @@ export default function App() {
   const [peertubeLogs, setPeertubeLogs] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "warn" }>>([]);
 
   const handleLaunchApp = () => {
-    setActiveTab("landing");
+    navigate("landing");
     setTimeout(() => {
       const el = document.getElementById("launch-section");
       if (el) {
@@ -294,6 +294,67 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [showWalletDropdown, setShowWalletDropdown] = useState(false);
+
+  // Client-side Router Helper
+  const navigate = (tab: "landing" | "viewer" | "creator" | "docs") => {
+    setActiveTab(tab);
+    let path = "/";
+    if (tab === "viewer") path = "/viewerportal";
+    else if (tab === "creator") path = "/dashboard";
+    else if (tab === "docs") path = "/docs";
+    
+    if (window.location.pathname !== path) {
+      window.history.pushState({}, "", path);
+    }
+  };
+
+  // Sync state on back/forward browser navigation and initial load
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      if (path === "/docs") {
+        setActiveTab("docs");
+      } else if (path === "/dashboard") {
+        setActiveTab("creator");
+      } else if (path === "/viewerportal") {
+        setActiveTab("viewer");
+      } else {
+        setActiveTab("landing");
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    
+    // Run once on load to render the correct view
+    handlePopState();
+
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  // Auto-dismiss alert notifications after 3.5 seconds
+  useEffect(() => {
+    if (errorMsg) {
+      const timer = setTimeout(() => {
+        setErrorMsg("");
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [errorMsg]);
+
+  useEffect(() => {
+    if (successMsg) {
+      const timer = setTimeout(() => {
+        setSuccessMsg("");
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [successMsg]);
+
+  // Log backend connection status to satisfy TypeScript TS6133
+  useEffect(() => {
+    if (backendStatus) {
+      console.log(`Backend connection status: ${backendStatus}`);
+    }
+  }, [backendStatus]);
 
   const addJellyfinLog = (msg: string, type: "info" | "success" | "warn" = "info") => {
     const time = new Date().toLocaleTimeString();
@@ -536,7 +597,7 @@ export default function App() {
         creatorName: "Direct Link Creator",
         ratePerSecond: 0.0001
       });
-      setActiveTab("viewer");
+      navigate("viewer");
     }
   }, []);
 
@@ -1384,7 +1445,7 @@ export default function App() {
           <div id="launch-section" className="flex flex-wrap gap-4 justify-center scroll-mt-24">
             <button 
               onClick={() => {
-                setActiveTab("viewer");
+                navigate("viewer");
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               className="btn-gold py-3 px-6 text-sm flex items-center gap-1.5"
@@ -1394,7 +1455,7 @@ export default function App() {
             </button>
             <button 
               onClick={() => {
-                setActiveTab("creator");
+                navigate("creator");
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               className="btn-outline py-3 px-6 text-sm flex items-center gap-1.5"
@@ -1445,7 +1506,7 @@ export default function App() {
               </p>
               <button 
                 onClick={() => {
-                  setActiveTab("docs");
+                  navigate("docs");
                   setDocsSection("overview");
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
@@ -1468,12 +1529,12 @@ export default function App() {
               <h5 className="footer-col-title">Products</h5>
               <ul className="footer-links-list">
                 <li>
-                  <button onClick={() => setActiveTab("viewer")} className="footer-link-item bg-transparent border-0 p-0 cursor-pointer">
+                  <button onClick={() => navigate("viewer")} className="footer-link-item bg-transparent border-0 p-0 cursor-pointer">
                     Viewer Portal
                   </button>
                 </li>
                 <li>
-                  <button onClick={() => setActiveTab("creator")} className="footer-link-item bg-transparent border-0 p-0 cursor-pointer">
+                  <button onClick={() => navigate("creator")} className="footer-link-item bg-transparent border-0 p-0 cursor-pointer">
                     Creator Console
                   </button>
                 </li>
@@ -1528,11 +1589,9 @@ export default function App() {
           {/* Bottom Toolbar */}
           <div className="footer-bottom-toolbar">
             <div className="flex items-center">
-              {/* Status Dot Indicator relocated from Header */}
               <div className="footer-status-indicator">
-                <span className={`status-dot ${backendStatus === "online" ? "active" : "inactive"}`}></span>
-                <span className="text-[11px] uppercase tracking-wider font-semibold">
-                  {backendStatus === "online" ? "System Online" : "System Offline"}
+                <span className="text-[11px] uppercase tracking-wider font-semibold text-secondary">
+                  Powered by Arc
                 </span>
               </div>
             </div>
@@ -1552,7 +1611,7 @@ export default function App() {
         <aside className="gitbook-sidebar">
           <button 
             onClick={() => {
-              setActiveTab("landing");
+              navigate("landing");
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
             className="flex items-center gap-1.5 text-xs text-gold-accent hover:text-gold-bright transition-all mb-8 bg-transparent border-0 cursor-pointer p-0 font-medium"
@@ -1854,7 +1913,7 @@ export default function App() {
       <header className="border-b border-gold-muted bg-[#0c0a08]/90 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div 
-            onClick={() => setActiveTab("landing")}
+            onClick={() => navigate("landing")}
             className="flex items-center gap-3 cursor-pointer select-none group"
           >
             <img 
@@ -1932,18 +1991,31 @@ export default function App() {
             )}
           </div>
         </div>
+        {/* Scroll fade gradient overlay */}
+        <div className="absolute top-full left-0 right-0 h-10 bg-gradient-to-b from-[#0c0a08]/90 to-transparent pointer-events-none z-[49]"></div>
       </header>
 
-      {/* Feedback Messages */}
       <div className="max-w-6xl mx-auto px-6 mt-4">
         {errorMsg && (
-          <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm mb-4">
-            {errorMsg}
+          <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm mb-4 flex justify-between items-center glass-panel shadow-lg">
+            <span className="flex-1 pr-4">{errorMsg}</span>
+            <button 
+              onClick={() => setErrorMsg("")}
+              className="text-red-400 hover:text-red-200 bg-transparent border-0 cursor-pointer p-1 rounded hover:bg-red-500/20 transition-all text-xs font-semibold shrink-0"
+            >
+              Dismiss
+            </button>
           </div>
         )}
         {successMsg && (
-          <div className="p-4 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded-lg text-sm mb-4">
-            {successMsg}
+          <div className="p-4 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded-lg text-sm mb-4 flex justify-between items-center glass-panel shadow-lg">
+            <span className="flex-1 pr-4">{successMsg}</span>
+            <button 
+              onClick={() => setSuccessMsg("")}
+              className="text-blue-300 hover:text-blue-100 bg-transparent border-0 cursor-pointer p-1 rounded hover:bg-blue-500/20 transition-all text-xs font-semibold shrink-0"
+            >
+              Dismiss
+            </button>
           </div>
         )}
       </div>

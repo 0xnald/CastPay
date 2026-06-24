@@ -552,7 +552,12 @@ th {
 
 /* Glassmorphism helpers */
 .glass-panel {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  background: rgba(20, 18, 15, 0.55);
+  border: 1px solid rgba(197, 168, 128, 0.12);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  transition: var(--transition);
 }
 
 /* ========================================== */
@@ -1041,6 +1046,17 @@ th {
     border-left: none;
     padding-left: 0;
   }
+}
+
+/* All buttons shrink when clicked */
+button:active, 
+.btn-gold:active, 
+.btn-outline:active, 
+.wallet-dropdown-item:active, 
+.docs-card:active, 
+.gitbook-nav-item:active {
+  transform: scale(0.96) !important;
+  transition: transform 0.1s ease !important;
 }
 
 
