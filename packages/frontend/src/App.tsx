@@ -18,7 +18,6 @@ import {
   Film,
   Lock,
   Layers,
-  X,
   ArrowLeft,
   Users,
   Sliders,
@@ -182,7 +181,6 @@ const formatWatchTime = (seconds: number) => {
 export default function App() {
   const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator" | "docs">("landing");
   const [docsSection, setDocsSection] = useState<"overview" | "viewers" | "creators" | "architecture">("overview");
-  const [showLaunchModal, setShowLaunchModal] = useState(false);
   
   // App States
   const [isPlaying, setIsPlaying] = useState(false);
@@ -249,7 +247,12 @@ export default function App() {
 
   const handleLaunchApp = () => {
     setActiveTab("landing");
-    setShowLaunchModal(true);
+    setTimeout(() => {
+      const el = document.getElementById("launch-section");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth" });
+      }
+    }, 100);
   };
 
   // Refs & Particle States
@@ -1378,7 +1381,7 @@ export default function App() {
             CastPay enables pay-per-second content monetization. Viewers pay micro-amounts in real time using non-custodial gateway wallets, while creators withdraw earnings instantly to any chain.
           </p>
           
-          <div className="flex flex-wrap gap-4 justify-center">
+          <div id="launch-section" className="flex flex-wrap gap-4 justify-center scroll-mt-24">
             <button 
               onClick={() => {
                 setActiveTab("viewer");
@@ -2979,59 +2982,6 @@ export default function App() {
         ) : null}
       </main>
 
-      {showLaunchModal && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[100] transition-all">
-          <div className="bg-[#14120f] border border-gold-accent/30 rounded-xl p-8 max-w-xl w-full mx-4 shadow-2xl relative select-portal-modal">
-            {/* The close button X is at the top left of the modal box */}
-            <div className="relative mb-6">
-              <button 
-                onClick={() => setShowLaunchModal(false)}
-                className="absolute top-0 left-0 text-black bg-[#eae3d2] hover:bg-[#c5a880] transition-all w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-              <div className="pl-10">
-                <h3 className="font-serif text-2xl text-gold-bright font-medium">Select Your Portal</h3>
-                <p className="text-secondary text-xs mt-1">Choose how you want to interact with the CastPay platform</p>
-              </div>
-            </div>
-            
-            <div className="flex flex-col gap-4">
-              <div 
-                onClick={() => {
-                  setActiveTab("viewer");
-                  setShowLaunchModal(false);
-                }}
-                className="group cursor-pointer bg-[#1c1915] hover:bg-[#25211b] border border-gold-muted hover:border-gold-accent p-6 rounded-lg transition-all text-center flex flex-col items-center gap-3"
-              >
-                <div className="w-12 h-12 rounded-full bg-gold-muted/20 flex items-center justify-center text-gold-accent group-hover:scale-110 transition-all">
-                  <Tv className="w-6 h-6" />
-                </div>
-                <h4 className="text-lg font-medium text-gold-bright">Viewer Portal</h4>
-                <p className="text-xs text-secondary leading-relaxed">
-                  Watch gated live streams and VODs, fund your gateway wallet, and pay per second.
-                </p>
-              </div>
-              
-              <div 
-                onClick={() => {
-                  setActiveTab("creator");
-                  setShowLaunchModal(false);
-                }}
-                className="group cursor-pointer bg-[#1c1915] hover:bg-[#25211b] border border-gold-muted hover:border-gold-accent p-6 rounded-lg transition-all text-center flex flex-col items-center gap-3"
-              >
-                <div className="w-12 h-12 rounded-full bg-gold-muted/20 flex items-center justify-center text-gold-accent group-hover:scale-110 transition-all">
-                  <Settings className="w-6 h-6" />
-                </div>
-                <h4 className="text-lg font-medium text-gold-bright">Creator Console</h4>
-                <p className="text-xs text-secondary leading-relaxed">
-                  Stream live video, upload VODs, set billing rates, and withdraw net earnings.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
