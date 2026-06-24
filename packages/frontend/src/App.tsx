@@ -18,7 +18,11 @@ import {
   Film,
   Lock,
   Layers,
-  X
+  X,
+  ArrowLeft,
+  Users,
+  Sliders,
+  Cpu
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
@@ -176,7 +180,8 @@ const formatWatchTime = (seconds: number) => {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator">("landing");
+  const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator" | "docs">("landing");
+  const [docsSection, setDocsSection] = useState<"overview" | "viewers" | "creators" | "architecture">("overview");
   const [showLaunchModal, setShowLaunchModal] = useState(false);
   
   // App States
@@ -242,7 +247,10 @@ export default function App() {
   const [peertubePlayState, setPeertubePlayState] = useState<"locked" | "playing">("locked");
   const [peertubeLogs, setPeertubeLogs] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "warn" }>>([]);
 
-
+  const handleLaunchApp = () => {
+    setActiveTab("landing");
+    setShowLaunchModal(true);
+  };
 
   // Refs & Particle States
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1372,11 +1380,24 @@ export default function App() {
           
           <div className="flex flex-wrap gap-4 justify-center">
             <button 
-              onClick={() => setShowLaunchModal(true)}
-              className="btn-gold py-4 px-8 text-md font-semibold rounded-xl"
+              onClick={() => {
+                setActiveTab("viewer");
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="btn-gold py-3 px-6 text-sm flex items-center gap-1.5"
             >
-              <Tv className="w-5 h-5 fill-current" />
-              Launch App
+              <Tv className="w-4 h-4 fill-current" />
+              Launch Viewer Portal
+            </button>
+            <button 
+              onClick={() => {
+                setActiveTab("creator");
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="btn-outline py-3 px-6 text-sm flex items-center gap-1.5"
+            >
+              <Settings className="w-4 h-4" />
+              Creator Console
             </button>
           </div>
         </div>
@@ -1419,11 +1440,14 @@ export default function App() {
               <p className="text-xs text-secondary leading-relaxed">
                 Secure, non-custodial pay-per-second content monetization powered by Circle Gateway and Arc L1.
               </p>
-              <a 
-                href="https://github.com/circlefin" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="docs-card"
+              <button 
+                onClick={() => {
+                  setActiveTab("docs");
+                  setDocsSection("overview");
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="docs-card text-left bg-transparent border-0 cursor-pointer p-0 w-full"
+                style={{ display: 'flex', maxWidth: '280px', marginTop: '16px' }}
               >
                 <div>
                   <div className="docs-card-title">
@@ -1433,7 +1457,7 @@ export default function App() {
                   <div className="docs-card-desc">Explore developer integration guides</div>
                 </div>
                 <ArrowUpRight className="w-4 h-4 text-secondary" />
-              </a>
+              </button>
             </div>
 
             {/* Products Column */}
@@ -1518,6 +1542,305 @@ export default function App() {
     );
   };
 
+  const renderDocsPanel = () => {
+    return (
+      <div className="gitbook-container my-8 animate-fade-in">
+        {/* Left Sidebar */}
+        <aside className="gitbook-sidebar">
+          <button 
+            onClick={() => {
+              setActiveTab("landing");
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className="flex items-center gap-1.5 text-xs text-gold-accent hover:text-gold-bright transition-all mb-8 bg-transparent border-0 cursor-pointer p-0 font-medium"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to App
+          </button>
+          
+          <h4 className="text-xs uppercase tracking-wider font-semibold text-secondary mb-4 px-2">Table of Contents</h4>
+          <nav className="flex flex-col gap-1">
+            <button 
+              onClick={() => setDocsSection("overview")}
+              className={`gitbook-nav-item ${docsSection === "overview" ? "active" : ""}`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              1. Overview
+            </button>
+            <button 
+              onClick={() => setDocsSection("viewers")}
+              className={`gitbook-nav-item ${docsSection === "viewers" ? "active" : ""}`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              2. Viewer Guide
+            </button>
+            <button 
+              onClick={() => setDocsSection("creators")}
+              className={`gitbook-nav-item ${docsSection === "creators" ? "active" : ""}`}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              3. Creator Guide
+            </button>
+            <button 
+              onClick={() => setDocsSection("architecture")}
+              className={`gitbook-nav-item ${docsSection === "architecture" ? "active" : ""}`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              4. Protocol Architecture
+            </button>
+          </nav>
+        </aside>
+
+        {/* Right Content Area */}
+        <div className="gitbook-content">
+          {docsSection === "overview" && (
+            <article className="prose prose-invert">
+              <h1 className="font-serif text-3xl text-gold-bright mb-4">CastPay: Continuous Streaming Monetization</h1>
+              <p className="text-secondary text-sm leading-relaxed mb-6">
+                CastPay is a production-grade, non-custodial pay-per-second and pay-per-minute settlement sidecar for live video and Video on Demand (VOD). It allows content creators to monetize live streams and VOD catalogs directly on the <strong>Arc Testnet</strong> using <strong>Circle Gateway</strong> pre-authorized USDC batching.
+              </p>
+              
+              <div className="border border-gold-muted/20 bg-gold-accent/5 p-4 rounded-lg mb-6">
+                <h3 className="text-xs uppercase font-semibold text-gold-accent mb-2 tracking-wide">Key Features</h3>
+                <ul className="text-xs text-secondary list-disc list-inside space-y-2">
+                  <li><strong>Pay-Per-Second:</strong> Micro-billing heartbeats verified off-chain and settled asynchronously.</li>
+                  <li><strong>Circle Gateway Batching:</strong> Allows zero-popup streaming signed securely using local ephemeral keys.</li>
+                  <li><strong>Multi-Platform Support:</strong> Simulators for Owncast, Jellyfin, and PeerTube.</li>
+                  <li><strong>Cross-Chain Payouts:</strong> Withdraw earnings instantly to target chains like Base Sepolia.</li>
+                </ul>
+              </div>
+            </article>
+          )}
+
+          {docsSection === "viewers" && (
+            <article className="prose prose-invert">
+              <h1 className="font-serif text-3xl text-gold-bright mb-2">1. How Viewers Join & Watch</h1>
+              <p className="text-secondary text-sm leading-relaxed mb-6">
+                Viewers connect their web3 wallet, fund a local session gateway balance, and pay continuously for media content with zero MetaMask popups during active streaming.
+              </p>
+
+              <div className="space-y-6">
+                <section className="border-l-2 border-gold-accent pl-4">
+                  <h3 className="text-md font-medium text-gold-bright">Step 1: Wallet Connection</h3>
+                  <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1">
+                    <li>Navigate to the CastPay portal and click <strong>Launch App</strong>.</li>
+                    <li>Choose <strong>Viewer Portal</strong>.</li>
+                    <li>Connect your MetaMask wallet. The portal will prompt you to switch to the <strong>Arc Testnet</strong>. If the network is not in your wallet, MetaMask will automatically add it with your custom Canteen RPC.</li>
+                  </ul>
+                </section>
+
+                <section className="border-l-2 border-gold-accent pl-4">
+                  <h3 className="text-md font-medium text-gold-bright">Step 2: Fund the Gateway Wallet</h3>
+                  <p className="text-xs text-secondary leading-relaxed mt-1">
+                    Ephemeral Session Keys are generated locally in the browser to sign high-frequency micro-billing heartbeats automatically. Viewers must fund this session's gateway balance:
+                  </p>
+                  <ol className="text-xs text-secondary list-decimal list-inside mt-1.5 space-y-1">
+                    <li>Click <strong>Deposit</strong>.</li>
+                    <li>Input the amount of USDC you wish to allocate (e.g. <code>2.00</code> USDC).</li>
+                    <li>Approve the transaction via MetaMask (triggers ERC-20 approval and <code>depositFor</code> on the Circle Gateway contract).</li>
+                  </ol>
+                </section>
+
+                <section className="border-l-2 border-gold-accent pl-4">
+                  <h3 className="text-md font-medium text-gold-bright">Step 3: Stream Content</h3>
+                  <p className="text-xs text-secondary leading-relaxed mt-1">
+                    Depending on the stream type registered by the creator, the viewer portal dynamically mounts the appropriate player/simulator:
+                  </p>
+                  
+                  <div className="mt-3 space-y-4">
+                    <div className="bg-[#14120f] border border-gold-muted/10 p-3.5 rounded-lg">
+                      <h4 className="text-xs font-semibold text-gold-accent flex items-center gap-1.5">
+                        <Tv className="w-3.5 h-3.5 fill-current" />
+                        A. Owncast Live Streams (Pay-Per-Second)
+                      </h4>
+                      <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1 pl-1">
+                        <li>Click <strong>Pay & Watch</strong>. An initial heartbeat payment handshake is verified by the backend.</li>
+                        <li>The gated HLS proxy mounts the live video stream.</li>
+                        <li>A payment heartbeat is automatically submitted every 2 seconds (<code>0.0002</code> USDC base + 1.5% fee).</li>
+                        <li>A floating particle system displays micro-transactions ascending in real-time.</li>
+                      </ul>
+                    </div>
+
+                    <div className="bg-[#14120f] border border-gold-muted/10 p-3.5 rounded-lg">
+                      <h4 className="text-xs font-semibold text-gold-accent flex items-center gap-1.5">
+                        <Film className="w-3.5 h-3.5" />
+                        B. Jellyfin VOD Simulator (Pay-Per-Minute)
+                      </h4>
+                      <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1 pl-1">
+                        <li>Switch to the <strong>Jellyfin Simulator</strong> tab.</li>
+                        <li>Click <strong>Play</strong> to start watching VOD content (submits a simulated <code>PlaybackStart</code> webhook).</li>
+                        <li>Click <strong>Simulate 1 Min Watch</strong> to fast-forward time and settle the per-minute billing fee on-chain.</li>
+                        <li>Click <strong>Stop</strong> to end playback and settle the final pro-rated billing amount.</li>
+                      </ul>
+                    </div>
+
+                    <div className="bg-[#14120f] border border-gold-muted/10 p-3.5 rounded-lg">
+                      <h4 className="text-xs font-semibold text-gold-accent flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5" />
+                        C. PeerTube VOD Simulator (Flat Tip)
+                      </h4>
+                      <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1 pl-1">
+                        <li>Switch to the <strong>PeerTube Simulator</strong> tab.</li>
+                        <li>Click <strong>Simulate Tip</strong> to trigger the PeerTube payments plugin webhook callback, instantly clearing the flat unlock fee and unlocking VOD streaming.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </article>
+          )}
+
+          {docsSection === "creators" && (
+            <article className="prose prose-invert">
+              <h1 className="font-serif text-3xl text-gold-bright mb-2">2. How Creators Onboard & Earn</h1>
+              <p className="text-secondary text-sm leading-relaxed mb-6">
+                Creators register their display names and streaming platforms, track gross/net billing statistics, and withdraw USDC earnings to any target chain.
+              </p>
+
+              <div className="space-y-6">
+                <section className="border-l-2 border-gold-accent pl-4">
+                  <h3 className="text-md font-medium text-gold-bright">Step 1: Creator Registration</h3>
+                  <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1">
+                    <li>Click <strong>Launch App</strong> -&gt; <strong>Creator Console</strong>.</li>
+                    <li>Connect your MetaMask wallet.</li>
+                    <li>Register your payout address (registers your creator profile in the active registry directory).</li>
+                  </ul>
+                </section>
+
+                <section className="border-l-2 border-gold-accent pl-4">
+                  <h3 className="text-md font-medium text-gold-bright">Step 2: Configure Platform Distribution</h3>
+                  <p className="text-xs text-secondary leading-relaxed mt-1">
+                    Choose the platform type that matches your setup:
+                  </p>
+
+                  <div className="mt-3 space-y-4">
+                    <div className="bg-[#14120f] border border-gold-muted/10 p-3.5 rounded-lg">
+                      <h4 className="text-xs font-semibold text-gold-accent flex items-center gap-1.5">
+                        <Tv className="w-3.5 h-3.5 fill-current" />
+                        A. Owncast (Live HLS Proxy)
+                      </h4>
+                      <p className="text-xs text-secondary mt-1.5 leading-relaxed pl-1">
+                        <strong>Setup:</strong> Enter your display name, secret Owncast stream playlist URL (e.g., <code>http://localhost:8080/hls/stream.m3u8</code>), and your billing rate (e.g. <code>0.0001</code> USDC/sec).
+                      </p>
+                      <p className="text-xs text-secondary mt-1 leading-relaxed pl-1">
+                        <strong>Launch:</strong> Click <strong>Go Live</strong>. CastPay starts proxying HLS video segments in-memory, masking your private server URL and gating access.
+                      </p>
+                    </div>
+
+                    <div className="bg-[#14120f] border border-gold-muted/10 p-3.5 rounded-lg">
+                      <h4 className="text-xs font-semibold text-gold-accent flex items-center gap-1.5">
+                        <Film className="w-3.5 h-3.5" />
+                        B. Jellyfin (VOD Webhook Sidecar)
+                      </h4>
+                      <p className="text-xs text-secondary mt-1.5 leading-relaxed pl-1">
+                        <strong>Setup:</strong> Enter your VOD content title, set a per-minute rate (e.g. <code>0.06</code> USDC/min), and click <strong>Register VOD</strong>.
+                      </p>
+                      <p className="text-xs text-secondary mt-1 leading-relaxed pl-1">
+                        <strong>Integration:</strong> Copy the webhook callback URL provided. Configure the Jellyfin Webhooks plugin on your server to target this endpoint.
+                      </p>
+                    </div>
+
+                    <div className="bg-[#14120f] border border-gold-muted/10 p-3.5 rounded-lg">
+                      <h4 className="text-xs font-semibold text-gold-accent flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5" />
+                        C. PeerTube (Payments Plugin)
+                      </h4>
+                      <p className="text-xs text-secondary mt-1.5 leading-relaxed pl-1">
+                        <strong>Setup:</strong> Enter your channel details, set a flat unlock tip (e.g., <code>1.50</code> USDC), and click <strong>Register Plugin</strong>.
+                      </p>
+                      <p className="text-xs text-secondary mt-1 leading-relaxed pl-1">
+                        <strong>Integration:</strong> Copy the plugin manifest JSON schema to register CastPay as your primary checkout processor.
+                      </p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="border-l-2 border-gold-accent pl-4">
+                  <h3 className="text-md font-medium text-gold-bright">Step 3: Track Earnings & Withdraw</h3>
+                  <p className="text-xs text-secondary leading-relaxed mt-1">
+                    The creator dashboard displays real-time performance statistics (Gross Revenue, Platform Fees, Net Earnings). To withdraw funds to another chain (e.g., Base Sepolia):
+                  </p>
+                  <ol className="text-xs text-secondary list-decimal list-inside mt-1.5 space-y-1">
+                    <li>Input your destination wallet address.</li>
+                    <li>Select the destination chain.</li>
+                    <li>Click <strong>Withdraw</strong>.</li>
+                    <li>Sign two sequential <code>BurnIntent</code> EIP-712 messages in MetaMask (one for Net earnings, and one for Platform Fee).</li>
+                    <li>The backend proxies the intents to Circle Gateway, completes the burn on Arc L1, and returns the attestation payload.</li>
+                    <li>MetaMask switches to the destination chain and triggers the <code>gatewayMint</code> contract call to mint your USDC instantly.</li>
+                  </ol>
+                </section>
+              </div>
+            </article>
+          )}
+
+          {docsSection === "architecture" && (
+            <article className="prose prose-invert">
+              <h1 className="font-serif text-3xl text-gold-bright mb-2">3. Core Architecture & Security</h1>
+              <p className="text-secondary text-sm leading-relaxed mb-6">
+                CastPay features secure off-chain signature verifications with asynchronous on-chain batch settlements. Below is the detailed transaction and control flow:
+              </p>
+
+              {/* Protocol Flow Timeline */}
+              <div className="mb-8">
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-gold-accent mb-4">Interactive Protocol Flow</h3>
+                <div className="space-y-3">
+                  {[
+                    { num: 1, from: "Viewer", to: "Browser", text: "Connect MetaMask & Deposit USDC" },
+                    { num: 2, from: "Browser", to: "Circle Gateway", text: "depositFor(SessionAddress, Amount) on-chain" },
+                    { num: 3, from: "Browser", to: "Browser", text: "Local Session Key signs micro-billing payload popup-free" },
+                    { num: 4, from: "Browser", to: "CastPay Backend", text: "POST /api/heartbeat with EIP-712 Payment Signature (every 2s)" },
+                    { num: 5, from: "CastPay Backend", to: "CastPay Backend", text: "Verify signature against pre-authorized balance (approx. 10ms)" },
+                    { num: 6, from: "CastPay Backend", to: "Browser", text: "Return 200 OK & serve gated HLS segments" },
+                    { num: 7, from: "CastPay Backend", to: "Circle Gateway", text: "Settle batches asynchronously in the background" },
+                    { num: 8, from: "Creator", to: "CastPay Backend", text: "Request withdrawal by signing BurnIntents" },
+                    { num: 9, from: "CastPay Backend", to: "Circle Gateway", text: "Submit BurnIntents for verification & attestation" },
+                    { num: 10, from: "Circle Gateway", to: "CastPay Backend", text: "Return Circle signature & bridge attestation" },
+                    { num: 11, from: "CastPay Backend", to: "Creator", text: "Provide attestation & signature payload" },
+                    { num: 12, from: "Creator", to: "Circle Gateway", text: "Switch chain & call gatewayMint to receive USDC" },
+                  ].map((s) => (
+                    <div key={s.num} className="flex gap-4 p-3 bg-[#14120f] border border-gold-muted/10 rounded-lg hover:border-gold-accent/40 transition-all items-center">
+                      <div className="w-6 h-6 rounded bg-gold-accent text-[#0a0907] flex items-center justify-center font-bold text-xs shrink-0">
+                        {s.num}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-[9px] uppercase font-mono tracking-wider text-secondary bg-secondary/5 border border-gold-muted/10 px-1.5 py-0.5 rounded">
+                            {s.from}
+                          </span>
+                          <span className="text-secondary text-[10px]">→</span>
+                          <span className="text-[9px] uppercase font-mono tracking-wider text-gold-accent bg-gold-accent/5 border border-gold-accent/15 px-1.5 py-0.5 rounded">
+                            {s.to}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gold-bright font-medium">{s.text}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Optimizations */}
+              <div className="border border-gold-muted/20 bg-card-bg p-4 rounded-lg">
+                <h3 className="text-xs uppercase font-semibold text-gold-accent mb-3 tracking-wide">Epic Scale & Optimizations</h3>
+                <div className="space-y-3 text-xs text-secondary leading-relaxed">
+                  <p>
+                    <strong>Asynchronous Settlements:</strong> Signature verification is handled synchronously in the backend, while on-chain gateway settlements run in the background. This ensures that media segment delivery requests never block.
+                  </p>
+                  <p>
+                    <strong>HLS Segment Memory Cache:</strong> To prevent multiple viewers from choking the Creator's home streaming server, HLS segments are cached in backend memory for 30 seconds.
+                  </p>
+                  <p>
+                    <strong>Clock & Latency Drifts:</strong> Ephemeral session signatures <code>validBefore</code> values include a 1-day safety margin to absorb clock skew.
+                  </p>
+                </div>
+              </div>
+            </article>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen pb-12 relative overflow-hidden">
       {/* Ambient Premium Gold Crescent Arcs */}
@@ -1544,9 +1867,9 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            {activeTab === "landing" ? (
+            {activeTab === "landing" || activeTab === "docs" ? (
               <button 
-                onClick={() => setShowLaunchModal(true)}
+                onClick={handleLaunchApp}
                 className="text-xs btn-gold px-3 py-1.5 rounded-lg flex items-center gap-1.5"
               >
                 <Tv className="w-3.5 h-3.5 fill-current" />
@@ -2122,7 +2445,7 @@ export default function App() {
               </div>
             </div>
           </div>
-        ) : (
+        ) : activeTab === "creator" ? (
           /* ========================================================================= */
           /* CREATOR DASHBOARD TAB                                                    */
           /* ========================================================================= */
@@ -2651,23 +2974,29 @@ export default function App() {
 
             </div>
           </div>
-        )}
+        ) : activeTab === "docs" ? (
+          renderDocsPanel()
+        ) : null}
       </main>
 
       {showLaunchModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[100] transition-all">
-          <div className="bg-[#14120f] border border-gold-accent/30 rounded-xl p-8 max-w-xl w-full mx-4 shadow-2xl relative">
-            <button 
-              onClick={() => setShowLaunchModal(false)}
-              className="absolute top-4 right-4 text-secondary hover:text-gold-bright transition-all"
-            >
-              <X className="w-5 h-5" />
-            </button>
+          <div className="bg-[#14120f] border border-gold-accent/30 rounded-xl p-8 max-w-xl w-full mx-4 shadow-2xl relative select-portal-modal">
+            {/* The close button X is at the top left of the modal box */}
+            <div className="relative mb-6">
+              <button 
+                onClick={() => setShowLaunchModal(false)}
+                className="absolute top-0 left-0 text-black bg-[#eae3d2] hover:bg-[#c5a880] transition-all w-7 h-7 rounded flex items-center justify-center font-bold text-xs"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <div className="pl-10">
+                <h3 className="font-serif text-2xl text-gold-bright font-medium">Select Your Portal</h3>
+                <p className="text-secondary text-xs mt-1">Choose how you want to interact with the CastPay platform</p>
+              </div>
+            </div>
             
-            <h3 className="font-serif text-3xl text-gold-bright mb-2 text-center">Select Your Portal</h3>
-            <p className="text-secondary text-xs text-center mb-8">Choose how you want to interact with the CastPay platform</p>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-4">
               <div 
                 onClick={() => {
                   setActiveTab("viewer");
@@ -2676,7 +3005,7 @@ export default function App() {
                 className="group cursor-pointer bg-[#1c1915] hover:bg-[#25211b] border border-gold-muted hover:border-gold-accent p-6 rounded-lg transition-all text-center flex flex-col items-center gap-3"
               >
                 <div className="w-12 h-12 rounded-full bg-gold-muted/20 flex items-center justify-center text-gold-accent group-hover:scale-110 transition-all">
-                  <Tv className="w-6 h-6 fill-current" />
+                  <Tv className="w-6 h-6" />
                 </div>
                 <h4 className="text-lg font-medium text-gold-bright">Viewer Portal</h4>
                 <p className="text-xs text-secondary leading-relaxed">

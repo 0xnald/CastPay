@@ -941,3 +941,106 @@ th {
   opacity: 0.8;
 }
 
+/* ========================================================================= */
+/* GITBOOK DOCUMENTATION PANEL                                               */
+/* ========================================================================= */
+
+.gitbook-container {
+  display: flex;
+  gap: 40px;
+  align-items: flex-start;
+  min-height: 70vh;
+  position: relative;
+  z-index: 10;
+}
+
+.gitbook-sidebar {
+  width: 250px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 100px;
+}
+
+.gitbook-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: var(--transition);
+}
+
+.gitbook-nav-item:hover {
+  color: var(--gold-bright);
+  background: rgba(197, 168, 128, 0.05);
+}
+
+.gitbook-nav-item.active {
+  color: var(--gold-accent);
+  background: rgba(197, 168, 128, 0.08);
+  font-weight: 600;
+  border-left: 2px solid var(--gold-accent);
+  border-radius: 0 6px 6px 0;
+}
+
+.gitbook-content {
+  flex: 1;
+  max-width: 800px;
+  border-left: 1px solid rgba(197, 168, 128, 0.1);
+  padding-left: 40px;
+  min-height: 50vh;
+}
+
+/* Onboarding Guides Style */
+.prose h1 {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--gold-bright);
+  margin-bottom: 1.5rem;
+}
+
+.prose p {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.prose h3 {
+  color: var(--gold-bright);
+  font-weight: 500;
+  font-size: 16px;
+}
+
+.prose code {
+  font-family: monospace;
+  background: rgba(197, 168, 128, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--gold-accent);
+  font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  .gitbook-container {
+    flex-direction: column;
+    gap: 30px;
+  }
+  .gitbook-sidebar {
+    width: 100%;
+    position: static;
+  }
+  .gitbook-content {
+    border-left: none;
+    padding-left: 0;
+  }
+}
+
+
