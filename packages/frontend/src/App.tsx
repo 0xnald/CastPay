@@ -1565,11 +1565,9 @@ export default function App() {
             <div>
               <h5 className="footer-col-title">Developers</h5>
               <ul className="footer-links-list">
-                <li><span className="footer-link-item opacity-50 cursor-default">API Reference</span></li>
-                <li><span className="footer-link-item opacity-50 cursor-default">EIP-3009 Spec</span></li>
                 <li>
-                  <a href="https://github.com/circlefin" target="_blank" rel="noopener noreferrer" className="footer-link-item">
-                    GitHub Repository
+                  <a href="https://github.com/0xnald/CastPay" target="_blank" rel="noopener noreferrer" className="footer-link-item">
+                    GitHub
                   </a>
                 </li>
               </ul>
@@ -1579,9 +1577,7 @@ export default function App() {
             <div>
               <h5 className="footer-col-title">Socials</h5>
               <ul className="footer-links-list">
-                <li><a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="footer-link-item">X / Twitter</a></li>
-                <li><a href="https://discord.com" target="_blank" rel="noopener noreferrer" className="footer-link-item">Discord</a></li>
-                <li><a href="https://telegram.org" target="_blank" rel="noopener noreferrer" className="footer-link-item">Telegram</a></li>
+                <li><a href="https://x.com/castpay_" target="_blank" rel="noopener noreferrer" className="footer-link-item">X / Twitter</a></li>
               </ul>
             </div>
           </div>
