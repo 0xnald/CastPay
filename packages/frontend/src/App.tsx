@@ -964,7 +964,7 @@ export default function App() {
       const netAmountAtomic = withdrawAmountAtomic - feeAmountAtomic;
 
       const recipient = withdrawAddress || creatorStats.sellerAddress;
-      const maxFeeVal = parseUnits("0.001", 6); // default max fee 0.001 USDC
+      const maxFeeVal = parseUnits("0.0035", 6); // default max fee 0.0035 USDC
 
       const fromConfig = CHAIN_CONFIGS.arcTestnet;
       const toConfig = CHAIN_CONFIGS[withdrawChain as SupportedChainName];
