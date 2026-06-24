@@ -699,6 +699,24 @@ export default function App() {
   }, [isPlaying, viewerKey, streamRate, selectedCreator?.creatorAddress]);
 
   const fetchBackendStats = async () => {
+    const hasTargetCreator = (activeTab === "creator" && connectedAddress) || 
+                             (activeTab === "viewer" && selectedCreator);
+
+    if (!hasTargetCreator) {
+      setCreatorStats({
+        activeViewers: 0,
+        totalReceived: "0.000000",
+        rate: 0.0001,
+        sellerAddress: "",
+        walletBalance: "0.00",
+        gasBalance: "0.00",
+        gateway: { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" },
+        heartbeats: [],
+        withdrawals: [],
+      });
+      return;
+    }
+
     try {
       let url = `${BACKEND_URL}/api/stats`;
       if (activeTab === "creator" && connectedAddress) {
@@ -2702,7 +2720,7 @@ export default function App() {
                     </strong>
                   </div>
                   
-                  {parseFloat(creatorStats.gasBalance) < 0.005 && (
+                  {connectedAddress && parseFloat(creatorStats.gasBalance) < 0.005 && (
                     <div className="mt-2.5 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 leading-normal">
                       ⚠️ Low gas warning. Please fund your wallet.
                     </div>
@@ -2713,6 +2731,7 @@ export default function App() {
                       setSuccessMsg(`Please fund address: ${creatorStats.sellerAddress} using the Circle Faucet!`);
                       window.open("https://faucet.circle.com/", "_blank");
                     }}
+                    disabled={!connectedAddress || !creatorStats.sellerAddress}
                     className="w-full btn-outline text-[10px] justify-center py-1.5 mt-2.5"
                     style={{ fontSize: '10px', padding: '6px 12px' }}
                   >
@@ -2992,7 +3011,7 @@ export default function App() {
 
                   <button
                     onClick={handleWithdraw}
-                    disabled={isWithdrawing || !withdrawAmount}
+                    disabled={isWithdrawing || !withdrawAmount || !connectedAddress}
                     className="w-full btn-gold text-xs justify-center py-2.5 mt-2"
                   >
                     {isWithdrawing ? (
