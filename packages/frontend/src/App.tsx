@@ -2376,7 +2376,7 @@ export default function App() {
                         {recentViewerPayments.map(p => (
                           <tr key={p.id} className="hover:bg-card-hover/20">
                             <td className="py-2.5 font-mono text-[10px] text-secondary">
-                              {p.txHash ? (
+                              {p.txHash && p.txHash.startsWith("0x") ? (
                                 <a 
                                   href={`https://testnet.arcscan.app/tx/${p.txHash}`}
                                   target="_blank" 
@@ -2385,6 +2385,8 @@ export default function App() {
                                 >
                                   {p.id} <ExternalLink className="w-2.5 h-2.5" />
                                 </a>
+                              ) : p.txHash ? (
+                                <span title={`Off-Chain Transfer ID: ${p.txHash}`}>{p.id} (batched)</span>
                               ) : (
                                 p.id
                               )}
@@ -2600,15 +2602,21 @@ export default function App() {
                             <td className="py-2.5 text-secondary">{new Date(h.timestamp).toLocaleTimeString()}</td>
                             <td className="py-2.5 text-right">
                               {h.txHash ? (
-                                <a 
-                                  href={`https://testnet.arcscan.app/tx/${h.txHash}`}
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-gold-accent hover:text-gold-bright inline-flex items-center gap-1"
-                                >
-                                  Tx
-                                  <ExternalLink className="w-3 h-3" />
-                                </a>
+                                h.txHash.startsWith("0x") ? (
+                                  <a 
+                                    href={`https://testnet.arcscan.app/tx/${h.txHash}`}
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-gold-accent hover:text-gold-bright inline-flex items-center gap-1"
+                                  >
+                                    Tx
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                ) : (
+                                  <span className="text-secondary font-medium bg-[#c5a880]/10 text-gold-accent px-1.5 py-0.5 rounded text-[10px]" title={`Off-Chain Transfer ID: ${h.txHash}`}>
+                                    batched
+                                  </span>
+                                )
                               ) : (
                                 <span className="text-secondary italic">pending</span>
                               )}
