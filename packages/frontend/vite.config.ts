@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
     ],
     define: {
       "process.env.RPC": JSON.stringify(process.env.RPC || env.RPC || "https://rpc.testnet.arc.network"),
+      "process.env.BACKEND_URL": JSON.stringify(process.env.BACKEND_URL || env.BACKEND_URL || "http://localhost:3001"),
     },
     server: {
       port: 3000,

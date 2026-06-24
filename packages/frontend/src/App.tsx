@@ -46,7 +46,7 @@ if (BatchEvmScheme && BatchEvmScheme.prototype) {
   (BatchEvmScheme.prototype as any).createPaymentPayload = patchPayload((BatchEvmScheme.prototype as any).createPaymentPayload);
 }
 
-const BACKEND_URL = "http://localhost:3001";
+const BACKEND_URL = (typeof process !== "undefined" && process.env && process.env.BACKEND_URL) || "http://localhost:3001";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
 const ARC_TESTNET_RPC = (typeof process !== "undefined" && process.env && process.env.RPC) || "https://rpc.testnet.arc.network";
 const PLATFORM_WALLET = "0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA";
