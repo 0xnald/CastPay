@@ -1247,7 +1247,7 @@ export default function App() {
             params: [{
               chainId: "0x4ceca2",
               chainName: "Arc Testnet",
-              rpcUrls: ["https://rpc.testnet.arc.network"],
+              rpcUrls: [ARC_TESTNET_RPC],
               nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
               blockExplorerUrls: ["https://testnet.arcscan.app"],
             }],

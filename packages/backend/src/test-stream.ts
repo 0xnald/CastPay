@@ -22,7 +22,7 @@ if (!funderKey) {
 }
 
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000" as const;
-const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
+const ARC_TESTNET_RPC = process.env.RPC || "https://rpc.testnet.arc.network";
 const BACKEND_URL = "http://localhost:3001/api/heartbeat";
 const DEPOSIT_AMOUNT = "1.00"; // Deposit 1.00 USDC into the Gateway Wallet
 const GAS_FUND_AMOUNT = parseEther("0.01"); // gas is USDC with 18 decimals on Arc Testnet
