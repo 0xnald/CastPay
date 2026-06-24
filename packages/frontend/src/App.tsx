@@ -16,7 +16,8 @@ import {
   LogOut,
   BookOpen,
   Film,
-  Lock
+  Lock,
+  Layers
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
