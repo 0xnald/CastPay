@@ -912,3 +912,32 @@ th {
   letter-spacing: 0.05em;
 }
 
+/* Ambient Premium Gold Crescent Arcs */
+.ambient-gold-curve-left {
+  position: absolute;
+  left: -200px;
+  top: 15%;
+  width: 300px;
+  height: 80vh;
+  border-radius: 50%;
+  border-right: 2px solid rgba(197, 168, 128, 0.25);
+  box-shadow: 60px 0 120px -30px rgba(197, 168, 128, 0.07);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.8;
+}
+
+.ambient-gold-curve-right {
+  position: absolute;
+  right: -200px;
+  top: 30%;
+  width: 300px;
+  height: 80vh;
+  border-radius: 50%;
+  border-left: 2px solid rgba(197, 168, 128, 0.25);
+  box-shadow: -60px 0 120px -30px rgba(197, 168, 128, 0.07);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.8;
+}
+

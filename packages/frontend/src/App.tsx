@@ -17,7 +17,8 @@ import {
   BookOpen,
   Film,
   Lock,
-  Layers
+  Layers,
+  X
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
@@ -176,6 +177,7 @@ const formatWatchTime = (seconds: number) => {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator">("landing");
+  const [showLaunchModal, setShowLaunchModal] = useState(false);
   
   // App States
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1355,7 +1357,7 @@ export default function App() {
         
         {/* Hero Section */}
         <div className="py-20 text-center max-w-4xl mx-auto flex flex-col items-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-gold-accent/20 bg-gold-accent/5 text-xs text-gold-accent mb-6">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 text-xs text-gold-accent mb-6 font-medium tracking-wider">
             <span className="w-1.5 h-1.5 rounded-full bg-gold-accent animate-pulse"></span>
             CastPay is live on Arc Testnet
           </div>
@@ -1370,18 +1372,11 @@ export default function App() {
           
           <div className="flex flex-wrap gap-4 justify-center">
             <button 
-              onClick={() => setActiveTab("viewer")}
-              className="btn-gold py-3 px-6 text-sm"
+              onClick={() => setShowLaunchModal(true)}
+              className="btn-gold py-4 px-8 text-md font-semibold rounded-xl"
             >
-              <Tv className="w-4 h-4 fill-current" />
-              Launch Viewer Portal
-            </button>
-            <button 
-              onClick={() => setActiveTab("creator")}
-              className="btn-outline py-3 px-6 text-sm"
-            >
-              <Settings className="w-4 h-4" />
-              Creator Console
+              <Tv className="w-5 h-5 fill-current" />
+              Launch App
             </button>
           </div>
         </div>
@@ -1524,7 +1519,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen pb-12">
+    <div className="min-h-screen pb-12 relative overflow-hidden">
+      {/* Ambient Premium Gold Crescent Arcs */}
+      <div className="ambient-gold-curve-left"></div>
+      <div className="ambient-gold-curve-right"></div>
+
       {/* Upper Navigation Bar */}
       <header className="border-b border-gold-muted bg-[#0c0a08]/90 sticky top-0 z-50 backdrop-blur-md">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -1545,7 +1544,15 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            {connectedAddress ? (
+            {activeTab === "landing" ? (
+              <button 
+                onClick={() => setShowLaunchModal(true)}
+                className="text-xs btn-gold px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+              >
+                <Tv className="w-3.5 h-3.5 fill-current" />
+                Launch App
+              </button>
+            ) : connectedAddress ? (
               <div className="relative" ref={dropdownRef}>
                 <button 
                   onClick={() => setShowWalletDropdown(!showWalletDropdown)}
@@ -2646,6 +2653,56 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {showLaunchModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[100] transition-all">
+          <div className="bg-[#14120f] border border-gold-accent/30 rounded-xl p-8 max-w-xl w-full mx-4 shadow-2xl relative">
+            <button 
+              onClick={() => setShowLaunchModal(false)}
+              className="absolute top-4 right-4 text-secondary hover:text-gold-bright transition-all"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <h3 className="font-serif text-3xl text-gold-bright mb-2 text-center">Select Your Portal</h3>
+            <p className="text-secondary text-xs text-center mb-8">Choose how you want to interact with the CastPay platform</p>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div 
+                onClick={() => {
+                  setActiveTab("viewer");
+                  setShowLaunchModal(false);
+                }}
+                className="group cursor-pointer bg-[#1c1915] hover:bg-[#25211b] border border-gold-muted hover:border-gold-accent p-6 rounded-lg transition-all text-center flex flex-col items-center gap-3"
+              >
+                <div className="w-12 h-12 rounded-full bg-gold-muted/20 flex items-center justify-center text-gold-accent group-hover:scale-110 transition-all">
+                  <Tv className="w-6 h-6 fill-current" />
+                </div>
+                <h4 className="text-lg font-medium text-gold-bright">Viewer Portal</h4>
+                <p className="text-xs text-secondary leading-relaxed">
+                  Watch gated live streams and VODs, fund your gateway wallet, and pay per second.
+                </p>
+              </div>
+              
+              <div 
+                onClick={() => {
+                  setActiveTab("creator");
+                  setShowLaunchModal(false);
+                }}
+                className="group cursor-pointer bg-[#1c1915] hover:bg-[#25211b] border border-gold-muted hover:border-gold-accent p-6 rounded-lg transition-all text-center flex flex-col items-center gap-3"
+              >
+                <div className="w-12 h-12 rounded-full bg-gold-muted/20 flex items-center justify-center text-gold-accent group-hover:scale-110 transition-all">
+                  <Settings className="w-6 h-6" />
+                </div>
+                <h4 className="text-lg font-medium text-gold-bright">Creator Console</h4>
+                <p className="text-xs text-secondary leading-relaxed">
+                  Stream live video, upload VODs, set billing rates, and withdraw net earnings.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
