@@ -366,11 +366,13 @@ app.get("/api/stats", async (req, res) => {
 
 // Endpoint: get global platform-wide statistics for the landing page
 app.get("/api/global-stats", (req, res) => {
-  const liveRevenue = heartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0) +
+  const owncastHeartbeats = heartbeats.filter(hb => !hb.id.startsWith("hb_jf_") && !hb.id.startsWith("hb_pt_"));
+
+  const liveRevenue = owncastHeartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0) +
                       jellyfinSessions.reduce((acc, curr) => acc + curr.totalSettledAmount, 0) +
                       peertubeTransactions.reduce((acc, curr) => acc + curr.amount, 0);
 
-  const liveWatchTimeSeconds = (heartbeats.length * 2) +
+  const liveWatchTimeSeconds = (owncastHeartbeats.length * 2) +
                                jellyfinSessions.reduce((acc, curr) => {
                                  const watchTime = curr.isActive 
                                    ? Math.floor((Date.now() - curr.startTimestamp) / 1000)
