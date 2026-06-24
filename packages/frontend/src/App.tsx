@@ -14,7 +14,9 @@ import {
   UserCheck,
   Copy,
   LogOut,
-  BookOpen
+  BookOpen,
+  Film,
+  Lock
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
@@ -214,14 +216,30 @@ export default function App() {
   const [isRegisteringCreator, setIsRegisteringCreator] = useState(false);
 
   // Multi-tenant streaming states
-  const [streamsList, setStreamsList] = useState<Array<{ creatorAddress: string; creatorName: string; ratePerSecond: number }>>([]);
-  const [selectedCreator, setSelectedCreator] = useState<{ creatorAddress: string; creatorName: string; ratePerSecond: number } | null>(null);
+  const [streamsList, setStreamsList] = useState<Array<{ creatorAddress: string; creatorName: string; ratePerSecond: number; platform?: string }>>([]);
+  const [selectedCreator, setSelectedCreator] = useState<{ creatorAddress: string; creatorName: string; ratePerSecond: number; platform?: string } | null>(null);
   const [hasLoadedStreams, setHasLoadedStreams] = useState(false);
   
   // Creator console broadcaster states
   const [creatorNameInput, setCreatorNameInput] = useState("");
   const [owncastUrlInput, setOwncastUrlInput] = useState("https://demo.owncast.online/hls/stream.m3u8");
   const [isStreamActive, setIsStreamActive] = useState(false);
+  const [platformType, setPlatformType] = useState<"owncast" | "jellyfin" | "peertube">("owncast");
+  const [jellyfinItemName, setJellyfinItemName] = useState("Big Buck Bunny (VOD)");
+  const [jellyfinRatePerMinute, setJellyfinRatePerMinute] = useState("0.006");
+  const [peertubeVideoTitle, setPeertubeVideoTitle] = useState("Sintel (Federated Video)");
+  const [peertubeAmount, setPeertubeAmount] = useState("0.05");
+
+  // VOD Simulation States
+  const [jellyfinPlayState, setJellyfinPlayState] = useState<"stopped" | "playing">("stopped");
+  const [jellyfinSessionId, setJellyfinSessionId] = useState<string | null>(null);
+  const [jellyfinLogs, setJellyfinLogs] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "warn" }>>([]);
+  const [jellyfinMinutesWatched, setJellyfinMinutesWatched] = useState(0);
+
+  const [peertubePlayState, setPeertubePlayState] = useState<"locked" | "playing">("locked");
+  const [peertubeLogs, setPeertubeLogs] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "warn" }>>([]);
+
+
 
   // Refs & Particle States
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -262,6 +280,130 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
   const [showWalletDropdown, setShowWalletDropdown] = useState(false);
+
+  const addJellyfinLog = (msg: string, type: "info" | "success" | "warn" = "info") => {
+    const time = new Date().toLocaleTimeString();
+    setJellyfinLogs(prev => [...prev, { time, msg, type }].slice(-20));
+  };
+
+  const addPeerTubeLog = (msg: string, type: "info" | "success" | "warn" = "info") => {
+    const time = new Date().toLocaleTimeString();
+    setPeertubeLogs(prev => [...prev, { time, msg, type }].slice(-20));
+  };
+
+  const triggerJellyfinWebhook = async (
+    notificationType: "PlaybackStart" | "PlaybackProgress" | "PlaybackStop",
+    creatorAddress: string,
+    rateSec: number
+  ) => {
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
+      return;
+    }
+
+    let currentSessionId = jellyfinSessionId;
+    if (notificationType === "PlaybackStart") {
+      currentSessionId = "jf_sess_" + Math.random().toString(36).substr(2, 9);
+      setJellyfinSessionId(currentSessionId);
+      setJellyfinPlayState("playing");
+      setJellyfinMinutesWatched(0);
+      setJellyfinLogs([]);
+      addJellyfinLog(`🎬 Jellyfin Playback Started for Session: ${currentSessionId}`, "info");
+    }
+
+    if (!currentSessionId) {
+      addJellyfinLog("⚠️ No active playback session to update.", "warn");
+      return;
+    }
+
+    try {
+      addJellyfinLog(`📡 Emitting Jellyfin Webhook event: ${notificationType}...`, "info");
+      const res = await fetch(`${BACKEND_URL}/api/webhooks/jellyfin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          NotificationType: notificationType,
+          SessionId: currentSessionId,
+          ItemName: jellyfinItemName || "Big Buck Bunny (VOD)",
+          ItemId: "jellyfin_item_12345",
+          UserId: "jellyfin_user_abcde",
+          viewerAddress: connectedAddress,
+          creatorAddress: creatorAddress,
+          ratePerMinute: rateSec * 60
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (notificationType === "PlaybackProgress") {
+          setJellyfinMinutesWatched(prev => prev + 1);
+          addJellyfinLog(`✅ PlaybackProgress processed. Settle triggered. (Total Settled: ${data.totalSettled?.toFixed(4)} USDC)`, "success");
+          
+          const id = Date.now() + Math.random();
+          setParticles(prev => [...prev, { id, text: `+$${(rateSec * 60).toFixed(4)} USDC (Jellyfin)`, x: 45 + Math.random() * 10, y: 70 }]);
+          setTimeout(() => {
+            setParticles(prev => prev.filter(p => p.id !== id));
+          }, 2000);
+        } else if (notificationType === "PlaybackStop") {
+          setJellyfinPlayState("stopped");
+          setJellyfinSessionId(null);
+          addJellyfinLog(`🏁 Jellyfin Playback Stopped. Final pro-rated settlement processed. (Total Session Earnings: ${data.totalSettled?.toFixed(4)} USDC)`, "success");
+        } else {
+          addJellyfinLog(`✅ PlaybackStart registered against Circle Gateway pre-authorization.`, "success");
+        }
+        fetchBackendStats();
+      } else {
+        const data = await res.json();
+        addJellyfinLog(`❌ Webhook failed: ${data.error || "Unknown error"}`, "warn");
+      }
+    } catch (e: any) {
+      addJellyfinLog(`❌ Network error sending webhook: ${e.message}`, "warn");
+    }
+  };
+
+  const triggerPeerTubeWebhook = async (creatorAddress: string, amountVal: number) => {
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
+      return;
+    }
+
+    try {
+      addPeerTubeLog(`📡 Emitting PeerTube Payments Webhook...`, "info");
+      const res = await fetch(`${BACKEND_URL}/api/webhooks/peertube`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "video.purchase",
+          viewerAddress: connectedAddress,
+          creatorAddress: creatorAddress,
+          amount: amountVal,
+          videoId: "peertube_video_98765",
+          videoTitle: peertubeVideoTitle || "Sintel (Federated Video)"
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setPeertubePlayState("playing");
+        addPeerTubeLog(`✅ PeerTube purchase webhook settled! Tx: ${data.txHash.slice(0, 10)}...`, "success");
+        addPeerTubeLog(`🔓 Video content unlocked. Enjoy playback!`, "success");
+        
+        const id = Date.now() + Math.random();
+        setParticles(prev => [...prev, { id, text: `+$${amountVal.toFixed(3)} USDC (PeerTube)`, x: 45 + Math.random() * 10, y: 70 }]);
+        setTimeout(() => {
+          setParticles(prev => prev.filter(p => p.id !== id));
+        }, 2000);
+
+        fetchBackendStats();
+      } else {
+        const data = await res.json();
+        addPeerTubeLog(`❌ Webhook failed: ${data.error || "Unknown error"}`, "warn");
+      }
+    } catch (e: any) {
+      addPeerTubeLog(`❌ Network error sending webhook: ${e.message}`, "warn");
+    }
+  };
+
   const [globalStats, setGlobalStats] = useState({
     totalRevenueProcessed: "1548.245300",
     totalStreamingSessions: 42,
@@ -936,14 +1078,47 @@ export default function App() {
       setErrorMsg("Please enter your display name.");
       return;
     }
-    if (!owncastUrlInput.trim()) {
-      setErrorMsg("Please enter your Owncast HLS stream URL.");
-      return;
-    }
-    const billingRate = parseFloat(newRate);
-    if (isNaN(billingRate) || billingRate <= 0) {
-      setErrorMsg("Please enter a valid positive billing rate.");
-      return;
+    
+    let billingRate = 0;
+    let targetStreamUrl = owncastUrlInput;
+    let targetName = creatorNameInput;
+
+    if (platformType === "owncast") {
+      if (!owncastUrlInput.trim()) {
+        setErrorMsg("Please enter your Owncast HLS stream URL.");
+        return;
+      }
+      billingRate = parseFloat(newRate);
+      if (isNaN(billingRate) || billingRate <= 0) {
+        setErrorMsg("Please enter a valid positive billing rate.");
+        return;
+      }
+    } else if (platformType === "jellyfin") {
+      if (!jellyfinItemName.trim()) {
+        setErrorMsg("Please enter the Movie/Show title.");
+        return;
+      }
+      const rateMin = parseFloat(jellyfinRatePerMinute);
+      if (isNaN(rateMin) || rateMin <= 0) {
+        setErrorMsg("Please enter a valid positive rate per minute.");
+        return;
+      }
+      billingRate = rateMin / 60; // pro-rate to per second
+      targetName = `${creatorNameInput} (${jellyfinItemName})`;
+      targetStreamUrl = `http://localhost:3001/api/webhooks/jellyfin/simulated`;
+    } else if (platformType === "peertube") {
+      if (!peertubeVideoTitle.trim()) {
+        setErrorMsg("Please enter the Video title.");
+        return;
+      }
+      const flatAmt = parseFloat(peertubeAmount);
+      if (isNaN(flatAmt) || flatAmt <= 0) {
+        setErrorMsg("Please enter a valid positive PeerTube amount.");
+        return;
+      }
+      billingRate = flatAmt; 
+      targetName = `${creatorNameInput} (${peertubeVideoTitle})`;
+      targetStreamUrl = `http://localhost:3001/api/webhooks/peertube/simulated`;
     }
 
     setIsRegisteringCreator(true);
@@ -967,14 +1142,15 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           address: connectedAddress,
-          name: creatorNameInput,
-          streamUrl: owncastUrlInput,
+          name: targetName,
+          streamUrl: targetStreamUrl,
           rate: billingRate,
+          platform: platformType,
         }),
       });
 
       if (streamRes.ok) {
-        setSuccessMsg(`Congratulations! You are now live as ${creatorNameInput}!`);
+        setSuccessMsg(`Congratulations! You are now live as ${targetName}!`);
         setIsStreamActive(true);
         fetchBackendStats();
       } else {
@@ -1470,23 +1646,81 @@ export default function App() {
                   </div>
 
                   {/* Video container */}
+                  {/* Video container */}
                   <div className="relative aspect-video bg-black flex items-center justify-center">
-                    {isPlaying ? (
-                      <video 
-                        ref={videoRef}
-                        className="w-full h-full object-contain"
-                        controls={false}
-                        playsInline
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center gap-4 text-center px-6">
-                        <Tv className="w-12 h-12 text-gold-muted" />
-                        <div>
-                          <h3 className="font-serif text-2xl text-gold-accent">Pay-Per-Second Stream Gating</h3>
-                          <p className="text-xs text-secondary max-w-sm mt-1">
-                            Authorize streaming micropayments with your Gateway balance to watch <strong>{selectedCreator.creatorName}</strong>.
-                          </p>
+                    {/* Platform conditional rendering */}
+                    {(!selectedCreator.platform || selectedCreator.platform === "owncast") ? (
+                      isPlaying ? (
+                        <video 
+                          ref={videoRef}
+                          className="w-full h-full object-contain"
+                          controls={false}
+                          playsInline
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-4 text-center px-6">
+                          <Tv className="w-12 h-12 text-gold-muted" />
+                          <div>
+                            <h3 className="font-serif text-2xl text-gold-accent">Pay-Per-Second Stream Gating</h3>
+                            <p className="text-xs text-secondary max-w-sm mt-1">
+                              Authorize streaming micropayments with your Gateway balance to watch <strong>{selectedCreator.creatorName}</strong>.
+                            </p>
+                          </div>
                         </div>
+                      )
+                    ) : selectedCreator.platform === "jellyfin" ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-[#0a0908] relative overflow-hidden">
+                        <div className="absolute top-4 left-4 flex items-center gap-2 text-gold-accent">
+                          <Film className="w-4 h-4" />
+                          <span className="text-[10px] uppercase tracking-widest font-semibold">Jellyfin VOD Portal</span>
+                        </div>
+                        {jellyfinPlayState === "playing" ? (
+                          <div className="flex flex-col items-center gap-4 text-center">
+                            <div className="w-12 h-12 rounded-full border-4 border-gold-accent border-t-transparent animate-spin flex items-center justify-center">
+                              <Film className="w-5 h-5 text-gold-bright" />
+                            </div>
+                            <div>
+                              <h4 className="font-serif text-xl text-gold-bright">Streaming Movie Selection</h4>
+                              <p className="text-xs text-secondary mt-1">Simulated Session: <strong className="text-gold-accent">{jellyfinSessionId?.slice(0, 10)}...</strong></p>
+                              <p className="text-xs text-secondary mt-0.5">Watch Time: <strong className="text-gold-accent">{jellyfinMinutesWatched} min</strong></p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-4 text-center">
+                            <Tv className="w-12 h-12 text-secondary opacity-40" />
+                            <div>
+                              <h4 className="font-serif text-xl text-secondary">Playback Stopped / Gated</h4>
+                              <p className="text-xs text-secondary mt-1">Settle rate: {(selectedCreator.ratePerSecond * 60).toFixed(4)} USDC/min</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* PeerTube Simulator */
+                      <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-[#0a0908] relative overflow-hidden">
+                        <div className="absolute top-4 left-4 flex items-center gap-2 text-gold-accent">
+                          <Layers className="w-4 h-4" />
+                          <span className="text-[10px] uppercase tracking-widest font-semibold">PeerTube Payments Plugin</span>
+                        </div>
+                        {peertubePlayState === "playing" ? (
+                          <div className="flex flex-col items-center gap-4 text-center">
+                            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                              <Play className="w-6 h-6 fill-current animate-pulse" />
+                            </div>
+                            <div>
+                              <h4 className="font-serif text-lg text-gold-bright">Sintel - Premium Playback Active</h4>
+                              <p className="text-xs text-secondary mt-1">Unlocked via CastPay monero/USDC gateway</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-4 text-center px-8">
+                            <Lock className="w-12 h-12 text-[#f87171] opacity-70 mb-2" />
+                            <div>
+                              <h4 className="font-serif text-xl text-gold-bright">Federated Video Gated</h4>
+                              <p className="text-xs text-secondary mt-1">Purchase flat rate: {selectedCreator.ratePerSecond.toFixed(2)} USDC to unlock</p>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1504,35 +1738,137 @@ export default function App() {
 
                   {/* Player actions panel */}
                   <div className="p-5 flex flex-col sm:flex-row gap-4 justify-between items-center bg-[#0d0b09]">
-                    <div className="text-xs text-secondary flex-grow">
-                      <div>Rate: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 1.015 * 2).toFixed(5)} USDC</strong> / 2s <span className="text-secondary text-[9px] font-normal">(incl. 1.5% fee)</span></div>
-                      <div className="mt-0.5">Creator Wallet: <span className="font-mono">{selectedCreator.creatorAddress.slice(0, 10)}...{selectedCreator.creatorAddress.slice(-8)}</span></div>
-                    </div>
+                    {(!selectedCreator.platform || selectedCreator.platform === "owncast") && (
+                      <>
+                        <div className="text-xs text-secondary flex-grow">
+                          <div>Rate: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 1.015 * 2).toFixed(5)} USDC</strong> / 2s <span className="text-secondary text-[9px] font-normal">(incl. 1.5% fee)</span></div>
+                          <div className="mt-0.5">Creator Wallet: <span className="font-mono">{selectedCreator.creatorAddress.slice(0, 10)}...{selectedCreator.creatorAddress.slice(-8)}</span></div>
+                        </div>
 
-                    <button
-                      onClick={() => {
-                        if (isPlaying) {
-                          setIsPlaying(false);
-                        } else {
-                          handleStartPlaying();
-                        }
-                      }}
-                      disabled={!viewerGatewayBalance || parseFloat(viewerGatewayBalance) <= 0}
-                      className={`w-full sm:w-auto btn-gold px-6 ${isPlaying ? "bg-red-400 text-black hover:bg-red-300" : ""}`}
-                    >
-                      {isPlaying ? (
-                        <>
-                          <Pause className="w-4 h-4 fill-current" />
-                          Pause Stream
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4 fill-current" />
-                          Pay & Watch
-                        </>
-                      )}
-                    </button>
+                        <button
+                          onClick={() => {
+                            if (isPlaying) {
+                              setIsPlaying(false);
+                            } else {
+                              handleStartPlaying();
+                            }
+                          }}
+                          disabled={!viewerGatewayBalance || parseFloat(viewerGatewayBalance) <= 0}
+                          className={`w-full sm:w-auto btn-gold px-6 ${isPlaying ? "bg-red-400 text-black hover:bg-red-300" : ""}`}
+                        >
+                          {isPlaying ? (
+                            <>
+                              <Pause className="w-4 h-4 fill-current" />
+                              Pause Stream
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-4 h-4 fill-current" />
+                              Pay & Watch
+                            </>
+                          )}
+                        </button>
+                      </>
+                    )}
+
+                    {selectedCreator.platform === "jellyfin" && (
+                      <>
+                        <div className="text-xs text-secondary flex-grow">
+                          <div>Rate: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 60 * 1.015).toFixed(4)} USDC</strong> / min <span className="text-secondary text-[9px] font-normal">(incl. 1.5% fee)</span></div>
+                          <div className="mt-0.5 font-mono text-[10px]">Session: {jellyfinSessionId || "none"}</div>
+                        </div>
+
+                        <div className="flex gap-2 w-full sm:w-auto">
+                          {jellyfinPlayState === "stopped" ? (
+                            <button
+                              onClick={() => triggerJellyfinWebhook("PlaybackStart", selectedCreator.creatorAddress, selectedCreator.ratePerSecond)}
+                              disabled={!viewerGatewayBalance || parseFloat(viewerGatewayBalance) <= 0}
+                              className="btn-gold text-xs px-4 py-2 flex-grow sm:flex-grow-0"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" /> Play
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => triggerJellyfinWebhook("PlaybackProgress", selectedCreator.creatorAddress, selectedCreator.ratePerSecond)}
+                                className="btn-outline text-xs px-4 py-2 border-gold-accent text-gold-accent hover:text-gold-bright"
+                              >
+                                ⏩ Simulate 1 Min Watch
+                              </button>
+                              <button
+                                onClick={() => triggerJellyfinWebhook("PlaybackStop", selectedCreator.creatorAddress, selectedCreator.ratePerSecond)}
+                                className="btn-gold text-xs px-4 py-2 bg-red-500 text-black hover:bg-red-400"
+                              >
+                                <Pause className="w-3.5 h-3.5 fill-current" /> Stop
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {selectedCreator.platform === "peertube" && (
+                      <>
+                        <div className="text-xs text-secondary flex-grow">
+                          <div>Price: <strong className="text-gold-bright">{(selectedCreator.ratePerSecond * 1.015).toFixed(3)} USDC</strong> <span className="text-secondary text-[9px] font-normal">(incl. 1.5% fee)</span></div>
+                          <div className="mt-0.5 font-mono text-[10px]">Status: {peertubePlayState}</div>
+                        </div>
+
+                        <div className="flex gap-2 w-full sm:w-auto">
+                          {peertubePlayState === "locked" ? (
+                            <button
+                              onClick={() => triggerPeerTubeWebhook(selectedCreator.creatorAddress, selectedCreator.ratePerSecond)}
+                              disabled={!viewerGatewayBalance || parseFloat(viewerGatewayBalance) <= 0}
+                              className="btn-gold text-xs px-5 py-2"
+                            >
+                              🔓 Purchase & Unlock Video
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setPeertubePlayState("locked")}
+                              className="btn-outline text-xs px-5 py-2"
+                            >
+                              🔒 Re-Lock Content
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
+
+                  {/* Simulation Logs Terminal */}
+                  {selectedCreator.platform && selectedCreator.platform !== "owncast" && (
+                    <div className="p-4 border-t border-gold-muted bg-[#050403] font-mono text-[10px] text-secondary">
+                      <div className="flex justify-between items-center mb-2 border-b border-gold-muted/20 pb-1.5 text-gold-muted">
+                        <span>Sidecar Webhook Activity Log</span>
+                        <span className="text-[8px] uppercase tracking-widest bg-gold-accent/10 px-1 py-0.5 rounded text-gold-accent font-semibold">Terminal</span>
+                      </div>
+                      <div className="max-h-24 overflow-y-auto space-y-1 pr-1 font-mono leading-relaxed">
+                        {selectedCreator.platform === "jellyfin" ? (
+                          jellyfinLogs.length === 0 ? (
+                            <span className="text-secondary/40 italic">Waiting for playback actions...</span>
+                          ) : (
+                            jellyfinLogs.map((log, idx) => (
+                              <div key={idx} className={log.type === "success" ? "text-emerald-400" : log.type === "warn" ? "text-amber-400" : "text-secondary"}>
+                                [{log.time}] {log.msg}
+                              </div>
+                            ))
+                          )
+                        ) : (
+                          peertubeLogs.length === 0 ? (
+                            <span className="text-secondary/40 italic">Waiting for purchase action...</span>
+                          ) : (
+                            peertubeLogs.map((log, idx) => (
+                              <div key={idx} className={log.type === "success" ? "text-emerald-400" : log.type === "warn" ? "text-amber-400" : "text-secondary"}>
+                                [{log.time}] {log.msg}
+                              </div>
+                            ))
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   
                   {/* Shareable link card */}
                   <div className="p-4 border-t border-gold-muted bg-[#0c0a08]/40 flex items-center justify-between">
@@ -1572,16 +1908,29 @@ export default function App() {
                         <div key={stream.creatorAddress} className="border border-gold-muted/30 rounded-xl p-5 bg-[#0d0b09] hover:border-gold-accent/40 transition-all flex flex-col justify-between gap-4">
                           <div>
                             <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                Live
-                              </span>
+                              <div className="flex gap-1.5 items-center">
+                                <span className="text-xs text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                  {stream.platform && stream.platform !== "owncast" ? "VOD" : "Live"}
+                                </span>
+                                <span className="text-[9px] text-gold-accent bg-gold-accent/5 border border-gold-accent/20 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider font-mono">
+                                  {stream.platform || "owncast"}
+                                </span>
+                              </div>
                               <span className="text-[10px] text-secondary font-mono">{stream.creatorAddress.slice(0, 6)}...{stream.creatorAddress.slice(-4)}</span>
                             </div>
                             <h4 className="font-serif text-lg text-gold-bright">{stream.creatorName}</h4>
                             <p className="text-xs text-secondary mt-1">
-                               Rate: <strong className="text-gold-accent">{(stream.ratePerSecond * 1.015 * 2).toFixed(5)} USDC</strong> / 2s <span className="text-secondary text-[9px] font-normal">(incl. fee)</span>
+                              {stream.platform === "jellyfin" ? (
+                                <>Rate: <strong className="text-gold-accent">{(stream.ratePerSecond * 60 * 1.015).toFixed(4)} USDC</strong> / min</>
+                              ) : stream.platform === "peertube" ? (
+                                <>Price: <strong className="text-gold-accent">{(stream.ratePerSecond * 1.015).toFixed(3)} USDC</strong> (Flat)</>
+                              ) : (
+                                <>Rate: <strong className="text-gold-accent">{(stream.ratePerSecond * 1.015 * 2).toFixed(5)} USDC</strong> / 2s</>
+                              )}{" "}
+                              <span className="text-secondary text-[9px] font-normal">(incl. fee)</span>
                             </p>
+
                           </div>
                           <button
                             onClick={() => {
@@ -1966,7 +2315,20 @@ export default function App() {
                     <h4 className="text-xs uppercase font-semibold text-secondary">Go Live Setup</h4>
                     
                     <div>
-                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Display Name</label>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Select Platform Type</label>
+                      <select 
+                        value={platformType}
+                        onChange={(e) => setPlatformType(e.target.value as any)}
+                        className="input-field text-xs bg-[#0c0a08] border border-gold-muted/30 rounded text-gold-bright"
+                      >
+                        <option value="owncast">Owncast Live (HLS Proxy Gate)</option>
+                        <option value="jellyfin">Jellyfin VOD (Webhook Sidecar)</option>
+                        <option value="peertube">PeerTube VOD (Payments Plugin)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Display Name / Channel Name</label>
                       <input 
                         type="text"
                         value={creatorNameInput}
@@ -1976,34 +2338,127 @@ export default function App() {
                       />
                     </div>
 
-                    <div>
-                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Secret Owncast HLS Stream URL</label>
-                      <input 
-                        type="text"
-                        value={owncastUrlInput}
-                        onChange={(e) => setOwncastUrlInput(e.target.value)}
-                        className="input-field text-xs"
-                        placeholder="e.g. https://your-owncast-server.com/hls/stream.m3u8"
-                      />
-                      <span className="text-[9px] text-secondary mt-1 block">
-                        Never exposed to viewers. Kept secure on backend.
-                      </span>
-                    </div>
+                    {platformType === "owncast" && (
+                      <>
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Secret Owncast HLS Stream URL</label>
+                          <input 
+                            type="text"
+                            value={owncastUrlInput}
+                            onChange={(e) => setOwncastUrlInput(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. https://your-owncast-server.com/hls/stream.m3u8"
+                          />
+                          <span className="text-[9px] text-secondary mt-1 block">
+                            Never exposed to viewers. Kept secure on backend.
+                          </span>
+                        </div>
 
-                    <div>
-                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Billing Rate (USDC/sec)</label>
-                      <input 
-                        type="number"
-                        step="0.00001"
-                        value={newRate}
-                        onChange={(e) => setNewRate(e.target.value)}
-                        className="input-field text-xs"
-                        placeholder="e.g. 0.0001"
-                      />
-                      <span className="text-[9px] text-secondary mt-1 block">
-                        Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> per 2s (Viewer pays <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 1.015 * 2).toFixed(5)} USDC</strong>, incl. 1.5% fee)
-                      </span>
-                    </div>
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Billing Rate (USDC/sec)</label>
+                          <input 
+                            type="number"
+                            step="0.00001"
+                            value={newRate}
+                            onChange={(e) => setNewRate(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. 0.0001"
+                          />
+                          <span className="text-[9px] text-secondary mt-1 block">
+                            Rate: <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 2).toFixed(5)} USDC</strong> per 2s (Viewer pays <strong className="text-gold-bright">{(parseFloat(newRate || "0") * 1.015 * 2).toFixed(5)} USDC</strong>, incl. 1.5% fee)
+                          </span>
+                        </div>
+                      </>
+                    )}
+
+                    {platformType === "jellyfin" && (
+                      <>
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Movie / Show Title</label>
+                          <input 
+                            type="text"
+                            value={jellyfinItemName}
+                            onChange={(e) => setJellyfinItemName(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. Big Buck Bunny (VOD)"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Jellyfin Server URL (Optional)</label>
+                          <input 
+                            type="text"
+                            value={owncastUrlInput}
+                            onChange={(e) => setOwncastUrlInput(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. http://localhost:8096"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Billing Rate (USDC/minute)</label>
+                          <input 
+                            type="number"
+                            step="0.001"
+                            value={jellyfinRatePerMinute}
+                            onChange={(e) => setJellyfinRatePerMinute(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. 0.006"
+                          />
+                          <span className="text-[9px] text-secondary mt-1 block">
+                            Calculated per-minute: Viewer pays <strong className="text-gold-bright">{(parseFloat(jellyfinRatePerMinute || "0") * 1.015).toFixed(4)} USDC</strong> / min (incl. 1.5% fee)
+                          </span>
+                          <span className="text-[9px] text-amber-400 mt-1.5 block">
+                            💡 Setup: Configure Jellyfin Webhook URL to: <code className="font-mono text-gold-accent select-all">http://localhost:3001/api/webhooks/jellyfin</code>
+                          </span>
+                        </div>
+                      </>
+                    )}
+
+                    {platformType === "peertube" && (
+                      <>
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Video Title</label>
+                          <input 
+                            type="text"
+                            value={peertubeVideoTitle}
+                            onChange={(e) => setPeertubeVideoTitle(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. Sintel (Federated)"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">PeerTube Video URL / ID</label>
+                          <input 
+                            type="text"
+                            value={owncastUrlInput}
+                            onChange={(e) => setOwncastUrlInput(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. https://peertube.xyz/videos/watch/123"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-[10px] uppercase font-semibold text-secondary block mb-1">Flat Payment Price (USDC)</label>
+                          <input 
+                            type="number"
+                            step="0.01"
+                            value={peertubeAmount}
+                            onChange={(e) => setPeertubeAmount(e.target.value)}
+                            className="input-field text-xs"
+                            placeholder="e.g. 0.05"
+                          />
+                          <span className="text-[9px] text-secondary mt-1 block">
+                            Flat Video Purchase Rate: Viewer pays <strong className="text-gold-bright">{(parseFloat(peertubeAmount || "0") * 1.015).toFixed(4)} USDC</strong> (incl. 1.5% fee)
+                          </span>
+                          <span className="text-[9px] text-amber-400 mt-1.5 block">
+                            💡 Setup: Exposes PR #6300 webhook compatibility. Manifest routes automatically configured.
+                          </span>
+                        </div>
+                      </>
+                    )}
+
 
                     <button
                       onClick={handleGoLive}
