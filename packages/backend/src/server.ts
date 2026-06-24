@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import * as dotenv from "dotenv";
 import * as path from "path";
+import * as fs from "fs";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 import { createPublicClient, http, fallback, formatUnits, erc20Abi } from "viem";
@@ -9,6 +10,9 @@ import { arcTestnet } from "viem/chains";
 
 // Load environment variables from the monorepo root
 dotenv.config({ path: path.resolve(__dirname, "../../../.env.local") });
+
+const STATE_FILE_PATH = path.resolve(__dirname, "../state.json");
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -71,7 +75,45 @@ interface ActiveStream {
 }
 
 const activeStreams: ActiveStream[] = [];
-let historicalStreamCount = 42; // baseline sessions
+let historicalStreamCount = 0;
+
+function loadState() {
+  try {
+    if (fs.existsSync(STATE_FILE_PATH)) {
+      const data = JSON.parse(fs.readFileSync(STATE_FILE_PATH, "utf8"));
+      heartbeats.length = 0;
+      withdrawals.length = 0;
+      activeStreams.length = 0;
+      if (Array.isArray(data.heartbeats)) heartbeats.push(...data.heartbeats);
+      if (Array.isArray(data.withdrawals)) withdrawals.push(...data.withdrawals);
+      if (Array.isArray(data.activeStreams)) activeStreams.push(...data.activeStreams);
+      historicalStreamCount = typeof data.historicalStreamCount === "number" ? data.historicalStreamCount : 0;
+      console.log(`[CastPay] State loaded: ${heartbeats.length} heartbeats, ${withdrawals.length} withdrawals, ${activeStreams.length} active streams, ${historicalStreamCount} historical sessions.`);
+    } else {
+      console.log("[CastPay] No state file found. Starting fresh.");
+    }
+  } catch (error) {
+    console.error("[CastPay] Error loading state:", error);
+  }
+}
+
+function saveState() {
+  try {
+    const data = {
+      heartbeats,
+      withdrawals,
+      activeStreams,
+      historicalStreamCount,
+    };
+    fs.writeFileSync(STATE_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
+  } catch (error) {
+    console.error("[CastPay] Error saving state:", error);
+  }
+}
+
+// Initial state load
+loadState();
+
 
 // Track active viewers by key: `${viewerAddress.toLowerCase()}_${creatorAddress.toLowerCase()}` -> last heartbeat timestamp
 const activeViewersMap = new Map<string, number>();
@@ -292,17 +334,14 @@ app.get("/api/stats", async (req, res) => {
 
 // Endpoint: get global platform-wide statistics for the landing page
 app.get("/api/global-stats", (req, res) => {
-  const baselineRevenue = 1548.2453;
-  const baselineWatchTimeSeconds = 142850;
-  
   // Sum up all heartbeat revenues from our live session
   const liveRevenue = heartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
   const liveWatchTimeSeconds = heartbeats.length * 2; // 2 seconds per heartbeat
   
   res.json({
-    totalRevenueProcessed: (baselineRevenue + liveRevenue).toFixed(6),
+    totalRevenueProcessed: liveRevenue.toFixed(6),
     totalStreamingSessions: historicalStreamCount,
-    totalWatchTime: baselineWatchTimeSeconds + liveWatchTimeSeconds
+    totalWatchTime: liveWatchTimeSeconds
   });
 });
 
@@ -356,6 +395,8 @@ app.post("/api/withdraw", async (req, res) => {
     txHash: null,
     timestamp: new Date().toISOString(),
   });
+  saveState();
+
 
   try {
     const GATEWAY_API_TESTNET = "https://gateway-api-testnet.circle.com/v1";
@@ -416,6 +457,7 @@ app.post("/api/withdraw", async (req, res) => {
     const idx = withdrawals.findIndex(w => w.id === withdrawalId);
     if (idx !== -1) {
       withdrawals[idx].status = "failed";
+      saveState();
     }
     res.status(500).json({ error: "Withdrawal failed", details: String(error) });
   }
@@ -431,6 +473,7 @@ app.post("/api/withdraw/confirm", (req, res) => {
   if (idx !== -1) {
     withdrawals[idx].status = "confirmed";
     withdrawals[idx].txHash = txHash;
+    saveState();
     console.log(`[CastPay] Withdrawal ${id} confirmed with tx: ${txHash}`);
     return res.json({ success: true });
   }
@@ -548,6 +591,7 @@ app.post("/api/heartbeat", async (req, res) => {
         };
 
         heartbeats.push(heartbeatEvent);
+        saveState();
         console.log(`[CastPay] Heartbeat Settled (Async): ${heartbeatPrice} USDC from ${settledPayer} to ${creatorAddress} | Active Viewers: ${getActiveViewerCount(creatorAddress)}`);
       }
     }).catch((err) => {
@@ -599,6 +643,7 @@ app.post("/api/streams/register", (req, res) => {
     isActive: true,
   });
 
+  saveState();
   console.log(`[CastPay] Creator stream registered: ${name} (${address}) -> ${streamUrl} at ${rate} USDC/sec`);
   res.json({ success: true, streams: activeStreams });
 });
@@ -614,6 +659,7 @@ app.post("/api/streams/stop", (req, res) => {
     activeStreams[idx].isActive = false;
     console.log(`[CastPay] Creator stream stopped: ${activeStreams[idx].creatorName} (${address})`);
     activeStreams.splice(idx, 1); // remove from active directory
+    saveState();
     return res.json({ success: true });
   }
   res.status(404).json({ error: "Active stream not found" });

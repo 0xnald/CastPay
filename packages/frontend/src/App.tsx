@@ -1209,29 +1209,27 @@ export default function App() {
           </div>
         </div>
 
-        {/* Global Statistics Banner */}
-        <div className="glass-panel p-8 mb-16 border border-gold-accent/20">
-          <h3 className="text-center text-xs uppercase tracking-widest text-secondary mb-6 font-semibold">
-            CastPay Global Performance
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center divide-y md:divide-y-0 md:divide-x divide-gold-muted/30">
-            <div className="pt-4 md:pt-0 md:px-4">
-              <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Total Revenue Processed</span>
-              <div className="stat-value">{parseFloat(globalStats.totalRevenueProcessed).toFixed(4)} USDC</div>
-              <span className="text-[10px] text-secondary mt-1 block">Live on-chain settlements</span>
-            </div>
-            <div className="pt-6 md:pt-0 md:px-4">
-              <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Total Streaming Sessions</span>
-              <div className="stat-value">{globalStats.totalStreamingSessions} Sessions</div>
-              <span className="text-[10px] text-secondary mt-1 block">Active and historical streamers</span>
-            </div>
-            <div className="pt-6 md:pt-0 md:px-4">
-              <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Total Watch Time</span>
-              <div className="stat-value">{formatWatchTime(globalStats.totalWatchTime)}</div>
-              <span className="text-[10px] text-secondary mt-1 block">Accumulated stream duration</span>
-            </div>
+        {/* Global Statistics Section */}
+        <div className="stats-vertical-container">
+          <div className="stats-item">
+            <span className="stats-item-title">Total Revenue Processed</span>
+            <div className="stats-item-value">{parseFloat(globalStats.totalRevenueProcessed).toFixed(4)} USDC</div>
+            <span className="stats-item-subtitle">Live on-chain settlements</span>
+          </div>
+
+          <div className="stats-item">
+            <span className="stats-item-title">Total Streaming Sessions</span>
+            <div className="stats-item-value">{globalStats.totalStreamingSessions} Sessions</div>
+            <span className="stats-item-subtitle">Active and historical streamers</span>
+          </div>
+
+          <div className="stats-item">
+            <span className="stats-item-title">Total Watch Time</span>
+            <div className="stats-item-value">{formatWatchTime(globalStats.totalWatchTime)}</div>
+            <span className="stats-item-subtitle">Accumulated stream duration</span>
           </div>
         </div>
+
 
         {/* GitBook-style Developer Footer */}
         <footer className="gitbook-footer">
