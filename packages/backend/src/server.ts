@@ -72,6 +72,7 @@ interface ActiveStream {
   streamUrl: string;
   ratePerSecond: number;
   isActive: boolean;
+  platform?: "owncast" | "jellyfin" | "peertube";
 }
 
 interface JellyfinSession {
@@ -813,7 +814,7 @@ app.post("/api/webhooks/peertube", async (req, res) => {
 
 // Endpoint: register active stream
 app.post("/api/streams/register", (req, res) => {
-  const { address, name, streamUrl, rate } = req.body;
+  const { address, name, streamUrl, rate, platform } = req.body;
   if (!address || !name || !streamUrl || typeof rate !== "number") {
     return res.status(400).json({ error: "address, name, streamUrl, and rate are required" });
   }
@@ -835,10 +836,11 @@ app.post("/api/streams/register", (req, res) => {
     streamUrl,
     ratePerSecond: rate,
     isActive: true,
+    platform: platform || "owncast",
   });
 
   saveState();
-  console.log(`[CastPay] Creator stream registered: ${name} (${address}) -> ${streamUrl} at ${rate} USDC/sec`);
+  console.log(`[CastPay] Creator stream registered: ${name} (${address}) -> ${streamUrl} at ${rate} USDC/sec [Platform: ${platform || "owncast"}]`);
   res.json({ success: true, streams: activeStreams });
 });
 
@@ -867,6 +869,7 @@ app.get("/api/streams", (req, res) => {
       creatorAddress: s.creatorAddress,
       creatorName: s.creatorName,
       ratePerSecond: s.ratePerSecond,
+      platform: s.platform || "owncast",
     }));
   res.json(publicStreams);
 });
