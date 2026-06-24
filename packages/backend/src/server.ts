@@ -294,7 +294,20 @@ app.get("/", (req, res) => {
 app.get("/api/stats", async (req, res) => {
   try {
     const targetCreator = req.query.creator as string;
-    const targetAddress = targetCreator ? (targetCreator as `0x${string}`) : sellerAddress;
+    if (!targetCreator) {
+      return res.json({
+        activeViewers: 0,
+        totalReceived: "0.000000",
+        rate: currentRatePerSecond,
+        sellerAddress: "",
+        walletBalance: "0.00",
+        gasBalance: "0.00",
+        gateway: { total: "0.00", available: "0.00", withdrawing: "0.00", withdrawable: "0.00" },
+        heartbeats: [],
+        withdrawals: [],
+      });
+    }
+    const targetAddress = targetCreator as `0x${string}`;
 
     const activeViewers = getActiveViewerCount(targetAddress);
     
