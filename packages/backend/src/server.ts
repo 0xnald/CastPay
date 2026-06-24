@@ -26,7 +26,7 @@ app.use(express.json());
 const ARC_TESTNET_NETWORK = "eip155:5042002";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000" as const;
 const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
-const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
+const ARC_TESTNET_RPC = process.env.RPC || "https://rpc.testnet.arc.network";
 const ARC_TESTNET_DOMAIN = 26;
 const PLATFORM_WALLET = "0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA";
 
@@ -74,8 +74,33 @@ interface ActiveStream {
   isActive: boolean;
 }
 
+interface JellyfinSession {
+  sessionId: string;
+  viewerAddress: string;
+  creatorAddress: string;
+  ratePerMinute: number;
+  startTimestamp: number;
+  lastSettleTimestamp: number;
+  totalSettledAmount: number;
+  itemName: string;
+  isActive: boolean;
+}
+
+interface PeerTubeTransaction {
+  id: string;
+  viewerAddress: string;
+  creatorAddress: string;
+  amount: number;
+  videoId: string;
+  videoTitle: string;
+  timestamp: string;
+  txHash: string | null;
+}
+
 const activeStreams: ActiveStream[] = [];
 let historicalStreamCount = 0;
+const jellyfinSessions: JellyfinSession[] = [];
+const peertubeTransactions: PeerTubeTransaction[] = [];
 
 function loadState() {
   try {
@@ -84,11 +109,15 @@ function loadState() {
       heartbeats.length = 0;
       withdrawals.length = 0;
       activeStreams.length = 0;
+      jellyfinSessions.length = 0;
+      peertubeTransactions.length = 0;
       if (Array.isArray(data.heartbeats)) heartbeats.push(...data.heartbeats);
       if (Array.isArray(data.withdrawals)) withdrawals.push(...data.withdrawals);
       if (Array.isArray(data.activeStreams)) activeStreams.push(...data.activeStreams);
+      if (Array.isArray(data.jellyfinSessions)) jellyfinSessions.push(...data.jellyfinSessions);
+      if (Array.isArray(data.peertubeTransactions)) peertubeTransactions.push(...data.peertubeTransactions);
       historicalStreamCount = typeof data.historicalStreamCount === "number" ? data.historicalStreamCount : 0;
-      console.log(`[CastPay] State loaded: ${heartbeats.length} heartbeats, ${withdrawals.length} withdrawals, ${activeStreams.length} active streams, ${historicalStreamCount} historical sessions.`);
+      console.log(`[CastPay] State loaded: ${heartbeats.length} heartbeats, ${withdrawals.length} withdrawals, ${jellyfinSessions.length} Jellyfin sessions, ${peertubeTransactions.length} PeerTube txs.`);
     } else {
       console.log("[CastPay] No state file found. Starting fresh.");
     }
@@ -104,6 +133,8 @@ function saveState() {
       withdrawals,
       activeStreams,
       historicalStreamCount,
+      jellyfinSessions,
+      peertubeTransactions,
     };
     fs.writeFileSync(STATE_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
   } catch (error) {
@@ -334,13 +365,23 @@ app.get("/api/stats", async (req, res) => {
 
 // Endpoint: get global platform-wide statistics for the landing page
 app.get("/api/global-stats", (req, res) => {
-  // Sum up all heartbeat revenues from our live session
-  const liveRevenue = heartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
-  const liveWatchTimeSeconds = heartbeats.length * 2; // 2 seconds per heartbeat
-  
+  const liveRevenue = heartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0) +
+                      jellyfinSessions.reduce((acc, curr) => acc + curr.totalSettledAmount, 0) +
+                      peertubeTransactions.reduce((acc, curr) => acc + curr.amount, 0);
+
+  const liveWatchTimeSeconds = (heartbeats.length * 2) +
+                               jellyfinSessions.reduce((acc, curr) => {
+                                 const watchTime = curr.isActive 
+                                   ? Math.floor((Date.now() - curr.startTimestamp) / 1000)
+                                   : Math.floor((curr.lastSettleTimestamp - curr.startTimestamp) / 1000);
+                                 return acc + (watchTime > 0 ? watchTime : 0);
+                               }, 0);
+
+  const totalSessions = historicalStreamCount + jellyfinSessions.length + peertubeTransactions.length;
+
   res.json({
     totalRevenueProcessed: liveRevenue.toFixed(6),
-    totalStreamingSessions: historicalStreamCount,
+    totalStreamingSessions: totalSessions,
     totalWatchTime: liveWatchTimeSeconds
   });
 });
@@ -616,6 +657,159 @@ app.post("/api/heartbeat", async (req, res) => {
     res.status(500).json({ error: "Internal payment processing error", details: String(error) });
   }
 });
+
+// Endpoint: Jellyfin Webhook receiver sidecar
+app.post("/api/webhooks/jellyfin", async (req, res) => {
+  const { NotificationType, SessionId, ItemName, ItemId, UserId, viewerAddress, creatorAddress, ratePerMinute } = req.body;
+
+  if (!NotificationType || !SessionId) {
+    return res.status(400).json({ error: "NotificationType and SessionId are required" });
+  }
+
+  console.log(`[CastPay Jellyfin Webhook] Event: ${NotificationType} | Session: ${SessionId} | Item: ${ItemName}`);
+
+  // Fallbacks for addresses if not supplied (to support direct standard webhook testing)
+  const targetViewer = viewerAddress || "0x0A5483f454051BCC0609A488ae6F536E5DAAc684"; // default buyer/viewer address
+  const targetCreator = creatorAddress || "0xB24B46b9aE72361f12dc5454D9B031608b23Ec79"; // default seller/creator address
+  const targetRate = typeof ratePerMinute === "number" ? ratePerMinute : 0.006; // default: 0.006 USDC/minute (0.0001 USDC/sec)
+
+  let session = jellyfinSessions.find(s => s.sessionId === SessionId);
+
+  if (NotificationType === "PlaybackStart") {
+    // Start new session
+    if (session) {
+      session.isActive = true;
+      session.startTimestamp = Date.now();
+      session.lastSettleTimestamp = Date.now();
+    } else {
+      jellyfinSessions.push({
+        sessionId: SessionId,
+        viewerAddress: targetViewer,
+        creatorAddress: targetCreator,
+        ratePerMinute: targetRate,
+        startTimestamp: Date.now(),
+        lastSettleTimestamp: Date.now(),
+        totalSettledAmount: 0,
+        itemName: ItemName || "Unknown VOD Content",
+        isActive: true
+      });
+    }
+    saveState();
+    return res.json({ success: true, message: "Playback session started" });
+  }
+
+  if (!session) {
+    // If progress/stop arrives but session wasn't started, create it now
+    session = {
+      sessionId: SessionId,
+      viewerAddress: targetViewer,
+      creatorAddress: targetCreator,
+      ratePerMinute: targetRate,
+      startTimestamp: Date.now() - 60000, // pretend it started 1 min ago
+      lastSettleTimestamp: Date.now() - 60000,
+      totalSettledAmount: 0,
+      itemName: ItemName || "Unknown VOD Content",
+      isActive: true
+    };
+    jellyfinSessions.push(session);
+  }
+
+  if (NotificationType === "PlaybackProgress") {
+    // Calculate elapsed minutes since last settlement
+    const now = Date.now();
+    const elapsedMinutes = Math.floor((now - session.lastSettleTimestamp) / 60000);
+
+    if (elapsedMinutes >= 1) {
+      const settleAmount = elapsedMinutes * session.ratePerMinute;
+      session.totalSettledAmount += settleAmount;
+      session.lastSettleTimestamp = now;
+
+      // Simulate the on-chain transfer recording
+      const fakeTxHash = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+      
+      // Also register a heartbeat event to show in log tables
+      heartbeats.push({
+        id: `hb_jf_${Date.now()}`,
+        payer: session.viewerAddress,
+        amount: settleAmount.toString(),
+        timestamp: new Date().toISOString(),
+        txHash: fakeTxHash
+      });
+
+      console.log(`[CastPay Jellyfin Webhook] Settled ${settleAmount} USDC for session ${SessionId} | Tx: ${fakeTxHash}`);
+    }
+    saveState();
+    return res.json({ success: true, message: "Playback progress processed", totalSettled: session.totalSettledAmount });
+  }
+
+  if (NotificationType === "PlaybackStop") {
+    // Finalize session
+    const now = Date.now();
+    const elapsedSeconds = Math.max(0, Math.floor((now - session.lastSettleTimestamp) / 1000));
+    
+    // Settle remaining pro-rated portion of the minute (down to second resolution)
+    if (elapsedSeconds > 0) {
+      const proRatedAmount = (elapsedSeconds / 60) * session.ratePerMinute;
+      session.totalSettledAmount += proRatedAmount;
+      
+      const fakeTxHash = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+      heartbeats.push({
+        id: `hb_jf_${Date.now()}`,
+        payer: session.viewerAddress,
+        amount: proRatedAmount.toFixed(6),
+        timestamp: new Date().toISOString(),
+        txHash: fakeTxHash
+      });
+    }
+
+    session.isActive = false;
+    session.lastSettleTimestamp = now;
+    saveState();
+    return res.json({ success: true, message: "Playback session stopped", totalSettled: session.totalSettledAmount });
+  }
+
+  res.status(400).json({ error: "Unsupported NotificationType" });
+});
+
+// Endpoint: PeerTube Payments Plugin receiver webhook
+app.post("/api/webhooks/peertube", async (req, res) => {
+  const { event, viewerAddress, creatorAddress, amount, videoId, videoTitle } = req.body;
+
+  if (!event || !viewerAddress || !creatorAddress || !amount) {
+    return res.status(400).json({ error: "event, viewerAddress, creatorAddress, and amount are required" });
+  }
+
+  console.log(`[CastPay PeerTube Webhook] Event: ${event} | Video: ${videoTitle || videoId} | Amount: ${amount} USDC`);
+
+  // Record transaction event
+  const txHash = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+  
+  const txRecord: PeerTubeTransaction = {
+    id: `pt_${Date.now()}`,
+    viewerAddress,
+    creatorAddress,
+    amount: parseFloat(amount),
+    videoId: videoId || "unknown",
+    videoTitle: videoTitle || "Unknown PeerTube Video",
+    timestamp: new Date().toISOString(),
+    txHash
+  };
+
+  peertubeTransactions.push(txRecord);
+
+  // Add a heartbeat record so it shows up in explorer listings
+  heartbeats.push({
+    id: `hb_pt_${Date.now()}`,
+    payer: viewerAddress,
+    amount: amount.toString(),
+    timestamp: new Date().toISOString(),
+    txHash
+  });
+
+  saveState();
+  res.json({ success: true, txHash, record: txRecord });
+});
+
 
 // Endpoint: register active stream
 app.post("/api/streams/register", (req, res) => {
