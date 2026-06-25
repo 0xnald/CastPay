@@ -11,7 +11,11 @@ import { arcTestnet } from "viem/chains";
 // Load environment variables from the monorepo root
 dotenv.config({ path: path.resolve(__dirname, "../../../.env.local") });
 
-const STATE_FILE_PATH = path.resolve(__dirname, "../state.json");
+const STATE_FILE_PATH =
+  process.env.STATE_FILE_PATH ||
+  (process.platform === "win32" ? path.resolve(__dirname, "../data/state.json") : "/app/packages/backend/data/state.json");
+
+fs.mkdirSync(path.dirname(STATE_FILE_PATH), { recursive: true });
 
 
 const app = express();
@@ -154,6 +158,10 @@ function saveState() {
       peertubeTransactions,
       platformFees,
     };
+    const dir = path.dirname(STATE_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     fs.writeFileSync(STATE_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
   } catch (error) {
     console.error("[CastPay] Error saving state:", error);
