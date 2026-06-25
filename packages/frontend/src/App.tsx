@@ -2761,9 +2761,6 @@ export default function App() {
           </div>
         ) : activeTab === "creator" ? (
           <>
-          /* ========================================================================= */
-          /* CREATOR DASHBOARD TAB                                                    */
-          /* ========================================================================= */
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             {/* Left/Middle: Live Statistics and Chart */}
