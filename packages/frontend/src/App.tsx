@@ -221,6 +221,11 @@ export default function App() {
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [isRegisteringCreator, setIsRegisteringCreator] = useState(false);
 
+  // Platform Fee States
+  const [platformFees, setPlatformFees] = useState<any[]>([]);
+  const [isLoadingFees, setIsLoadingFees] = useState(false);
+  const [claimingFeeId, setClaimingFeeId] = useState<string | null>(null);
+
   // Multi-tenant streaming states
   const [streamsList, setStreamsList] = useState<Array<{ creatorAddress: string; creatorName: string; ratePerSecond: number; platform?: string }>>([]);
   const [selectedCreator, setSelectedCreator] = useState<{ creatorAddress: string; creatorName: string; ratePerSecond: number; platform?: string } | null>(null);
@@ -697,6 +702,95 @@ export default function App() {
       }
     };
   }, [isPlaying, viewerKey, streamRate, selectedCreator?.creatorAddress]);
+
+  const fetchPlatformFees = async () => {
+    if (!connectedAddress || connectedAddress.toLowerCase() !== PLATFORM_WALLET.toLowerCase()) return;
+    setIsLoadingFees(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/platform-fees`);
+      if (res.ok) {
+        const data = await res.json();
+        setPlatformFees(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch platform fees:", err);
+    } finally {
+      setIsLoadingFees(false);
+    }
+  };
+
+  useEffect(() => {
+    if (connectedAddress && connectedAddress.toLowerCase() === PLATFORM_WALLET.toLowerCase()) {
+      fetchPlatformFees();
+      const interval = setInterval(fetchPlatformFees, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [connectedAddress]);
+
+  const handleClaimPlatformFee = async (fee: any) => {
+    if (claimingFeeId) return;
+    setClaimingFeeId(fee.id);
+    setErrorMsg("");
+    setSuccessMsg("");
+
+    try {
+      const toConfig = CHAIN_CONFIGS[fee.destinationChain as SupportedChainName];
+      if (!toConfig) {
+        throw new Error(`Unsupported destination chain: ${fee.destinationChain}`);
+      }
+
+      // Switch chain if connected chain doesn't match
+      const destChainId = toConfig.chain.id;
+      if (connectedChainId !== destChainId) {
+        setSuccessMsg(`Switching network to ${toConfig.chain.name} for claiming...`);
+        await switchNetwork(
+          destChainId,
+          toConfig.chain.name,
+          toConfig.rpcUrl || toConfig.chain.rpcUrls.default.http[0],
+          toConfig.chain.nativeCurrency || { name: "USDC", symbol: "USDC", decimals: 18 },
+          toConfig.chain.blockExplorers?.default?.url || ""
+        );
+        // Wait briefly for network switch to complete in MetaMask
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      setSuccessMsg(`Submitting platform fee claim transaction on ${toConfig.chain.name}...`);
+      const destWallet = createWalletClient({
+        account: connectedAddress as `0x${string}`,
+        chain: toConfig.chain,
+        transport: custom((window as any).ethereum)
+      });
+      const destPublic = createPublicClient({
+        chain: toConfig.chain,
+        transport: custom((window as any).ethereum)
+      });
+
+      const mintTx = await destWallet.writeContract({
+        address: toConfig.gatewayMinter,
+        abi: GATEWAY_MINTER_ABI,
+        functionName: "gatewayMint",
+        args: [fee.attestation, fee.circleSignature]
+      });
+
+      setSuccessMsg(`Claim submitted: ${mintTx.slice(0, 15)}... Waiting for receipt...`);
+      await destPublic.waitForTransactionReceipt({ hash: mintTx });
+
+      // Confirm platform fee claim with the backend sidecar
+      await fetch(`${BACKEND_URL}/api/platform-fees/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: fee.id, txHash: mintTx }),
+      });
+
+      setSuccessMsg(`Platform fee successfully claimed! Tx: ${mintTx.slice(0, 15)}...`);
+      fetchPlatformFees();
+    } catch (err: any) {
+      console.error("Platform fee claim error:", err);
+      setErrorMsg(`Claim failed: ${err.message || err.toString()}`);
+    } finally {
+      setClaimingFeeId(null);
+    }
+  };
 
   const fetchBackendStats = async () => {
     const hasTargetCreator = (activeTab === "creator" && connectedAddress) || 
@@ -1917,6 +2011,135 @@ export default function App() {
     );
   };
 
+  const renderPlatformAdmin = () => {
+    const pendingFees = platformFees.filter(f => f.status === "pending_claim");
+    const claimedFees = platformFees.filter(f => f.status === "claimed");
+
+    const totalPendingAmount = pendingFees.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+    const totalClaimedAmount = claimedFees.reduce((acc, curr) => acc + parseFloat(curr.amount), 0);
+
+    return (
+      <div className="glass-panel p-6 mt-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="font-serif text-xl tracking-wide font-medium text-gold-bright flex items-center gap-2">
+              <Settings className="w-5 h-5 text-gold-accent animate-spin-slow" />
+              Platform Fees Administrator Console
+            </h3>
+            <p className="text-xs text-secondary mt-1">
+              Manage and claim cross-chain platform fee payments routed to the platform wallet.
+            </p>
+          </div>
+          <button 
+            onClick={fetchPlatformFees} 
+            disabled={isLoadingFees}
+            className="btn-outline text-xs px-3 py-1.5 flex items-center gap-1.5"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingFees ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+          <div className="bg-[#0f0d0a] border border-gold-muted/10 p-4 rounded-lg">
+            <span className="text-[10px] uppercase font-semibold text-secondary block">Pending Claims</span>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="font-serif text-3xl text-gold-accent">{totalPendingAmount.toFixed(4)}</span>
+              <span className="text-xs text-secondary font-medium">USDC</span>
+            </div>
+            <span className="text-[9px] text-secondary mt-1.5 block">
+              Count: <strong className="text-gold-bright">{pendingFees.length}</strong> transactions
+            </span>
+          </div>
+
+          <div className="bg-[#0f0d0a] border border-gold-muted/10 p-4 rounded-lg">
+            <span className="text-[10px] uppercase font-semibold text-secondary block">Claimed Revenue</span>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="font-serif text-3xl text-primary">{totalClaimedAmount.toFixed(4)}</span>
+              <span className="text-xs text-secondary font-medium">USDC</span>
+            </div>
+            <span className="text-[9px] text-secondary mt-1.5 block">
+              Count: <strong className="text-gold-bright">{claimedFees.length}</strong> transactions
+            </span>
+          </div>
+        </div>
+
+        {/* Ledger Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-gold-muted/10 text-[10px] uppercase font-semibold text-secondary">
+                <th className="py-2.5">ID</th>
+                <th className="py-2.5">Timestamp</th>
+                <th className="py-2.5">Chain</th>
+                <th className="py-2.5 text-right">Fee (USDC)</th>
+                <th className="py-2.5 text-center">Status</th>
+                <th className="py-2.5 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {platformFees.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="text-xs text-secondary text-center py-8 border border-dashed border-gold-muted/10 rounded-lg">
+                    No platform fee payouts recorded yet.
+                  </td>
+                </tr>
+              ) : (
+                platformFees.map((fee) => (
+                  <tr key={fee.id} className="border-b border-gold-muted/5 text-xs hover:bg-[#0c0a08]/30 transition-all">
+                    <td className="py-3 font-mono text-[10px] text-secondary">{fee.id}</td>
+                    <td className="py-3 text-secondary">{new Date(fee.timestamp).toLocaleString()}</td>
+                    <td className="py-3 text-gold-accent font-medium uppercase">{fee.destinationChain}</td>
+                    <td className="py-3 text-right font-semibold text-gold-bright">{parseFloat(fee.amount).toFixed(4)}</td>
+                    <td className="py-3 text-center">
+                      {fee.status === "claimed" ? (
+                        <span className="text-blue-400 text-[10px] font-medium bg-blue-400/5 px-2 py-0.5 rounded">Claimed</span>
+                      ) : (
+                        <span className="text-secondary text-[10px] font-medium bg-secondary/5 px-2 py-0.5 rounded">Pending Claim</span>
+                      )}
+                    </td>
+                    <td className="py-3 text-right">
+                      {fee.status === "claimed" ? (
+                        fee.txHash ? (
+                          <a 
+                            href={getExplorerTxLink(fee.destinationChain, fee.txHash)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-gold-accent hover:text-gold-bright underline inline-flex items-center gap-0.5"
+                          >
+                            View Tx <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        ) : (
+                          <span className="text-[10px] text-secondary">Confirmed</span>
+                        )
+                      ) : (
+                        <button
+                          onClick={() => handleClaimPlatformFee(fee)}
+                          disabled={claimingFeeId !== null}
+                          className="btn-gold text-[10px] px-2.5 py-1"
+                        >
+                          {claimingFeeId === fee.id ? (
+                            <>
+                              <RefreshCw className="w-2.5 h-2.5 animate-spin mr-1 inline" />
+                              Claiming...
+                            </>
+                          ) : (
+                            "Claim Fee"
+                          )}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen pb-12 relative overflow-hidden">
       {/* Ambient Premium Gold Crescent Arcs */}
@@ -2537,6 +2760,7 @@ export default function App() {
             </div>
           </div>
         ) : activeTab === "creator" ? (
+          <>
           /* ========================================================================= */
           /* CREATOR DASHBOARD TAB                                                    */
           /* ========================================================================= */
@@ -3072,6 +3296,10 @@ export default function App() {
 
             </div>
           </div>
+          {connectedAddress && connectedAddress.toLowerCase() === PLATFORM_WALLET.toLowerCase() && (
+            renderPlatformAdmin()
+          )}
+          </>
         ) : activeTab === "docs" ? (
           renderDocsPanel()
         ) : null}
