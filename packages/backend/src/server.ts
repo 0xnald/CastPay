@@ -98,10 +98,24 @@ interface PeerTubeTransaction {
   txHash: string | null;
 }
 
+interface PlatformFee {
+  id: string;
+  amount: string;
+  destinationChain: string;
+  recipient: string;
+  spec: any;
+  attestation: string | null;
+  circleSignature: string | null;
+  status: "pending_claim" | "claimed";
+  txHash: string | null;
+  timestamp: string;
+}
+
 const activeStreams: ActiveStream[] = [];
 let historicalStreamCount = 0;
 const jellyfinSessions: JellyfinSession[] = [];
 const peertubeTransactions: PeerTubeTransaction[] = [];
+const platformFees: PlatformFee[] = [];
 
 function loadState() {
   try {
@@ -112,13 +126,15 @@ function loadState() {
       activeStreams.length = 0;
       jellyfinSessions.length = 0;
       peertubeTransactions.length = 0;
+      platformFees.length = 0;
       if (Array.isArray(data.heartbeats)) heartbeats.push(...data.heartbeats);
       if (Array.isArray(data.withdrawals)) withdrawals.push(...data.withdrawals);
       if (Array.isArray(data.activeStreams)) activeStreams.push(...data.activeStreams);
       if (Array.isArray(data.jellyfinSessions)) jellyfinSessions.push(...data.jellyfinSessions);
       if (Array.isArray(data.peertubeTransactions)) peertubeTransactions.push(...data.peertubeTransactions);
+      if (Array.isArray(data.platformFees)) platformFees.push(...data.platformFees);
       historicalStreamCount = typeof data.historicalStreamCount === "number" ? data.historicalStreamCount : 0;
-      console.log(`[CastPay] State loaded: ${heartbeats.length} heartbeats, ${withdrawals.length} withdrawals, ${jellyfinSessions.length} Jellyfin sessions, ${peertubeTransactions.length} PeerTube txs.`);
+      console.log(`[CastPay] State loaded: ${heartbeats.length} heartbeats, ${withdrawals.length} withdrawals, ${jellyfinSessions.length} Jellyfin sessions, ${peertubeTransactions.length} PeerTube txs, ${platformFees.length} platform fees.`);
     } else {
       console.log("[CastPay] No state file found. Starting fresh.");
     }
@@ -136,6 +152,7 @@ function saveState() {
       historicalStreamCount,
       jellyfinSessions,
       peertubeTransactions,
+      platformFees,
     };
     fs.writeFileSync(STATE_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
   } catch (error) {
@@ -469,6 +486,9 @@ app.post("/api/withdraw", async (req, res) => {
         return res.status(400).json({ error: "Invalid platform fee recipient address" });
       }
 
+      const feeAmountFormatted = (parseFloat(feeSpec.value) / 1_000_000).toFixed(6);
+      const feeId = `fee_${Date.now()}`;
+
       fetch(`${GATEWAY_API_TESTNET}/transfer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -478,6 +498,22 @@ app.post("/api/withdraw", async (req, res) => {
         )
       }).then(r => r.json()).then(resData => {
         console.log("[CastPay Platform Fee] Settle result:", resData);
+        if (resData.success !== false && !resData.error && resData.attestation && resData.signature) {
+          platformFees.push({
+            id: feeId,
+            amount: feeAmountFormatted,
+            destinationChain,
+            recipient: feeRecipient,
+            spec: feeSpec,
+            attestation: resData.attestation,
+            circleSignature: resData.signature,
+            status: "pending_claim",
+            txHash: null,
+            timestamp: new Date().toISOString(),
+          });
+          saveState();
+          console.log(`[CastPay Platform Fee] Recorded fee claim: ${feeAmountFormatted} USDC for platform wallet`);
+        }
       }).catch(e => {
         console.error("[CastPay Platform Fee] Settle failed:", e);
       });
@@ -518,6 +554,28 @@ app.post("/api/withdraw", async (req, res) => {
     }
     res.status(500).json({ error: "Withdrawal failed", details: String(error) });
   }
+});
+
+// Endpoint: get list of platform fees
+app.get("/api/platform-fees", (req, res) => {
+  res.json(platformFees);
+});
+
+// Endpoint: confirm claim of platform fee
+app.post("/api/platform-fees/claim", (req, res) => {
+  const { id, txHash } = req.body;
+  if (!id || !txHash) {
+    return res.status(400).json({ error: "id and txHash are required" });
+  }
+  const idx = platformFees.findIndex(f => f.id === id);
+  if (idx !== -1) {
+    platformFees[idx].status = "claimed";
+    platformFees[idx].txHash = txHash;
+    saveState();
+    console.log(`[CastPay Platform Fee] Claim for fee ${id} confirmed with tx: ${txHash}`);
+    return res.json({ success: true });
+  }
+  res.status(404).json({ error: "Platform fee record not found" });
 });
 
 // Endpoint: confirm complete withdrawal mint tx hash
