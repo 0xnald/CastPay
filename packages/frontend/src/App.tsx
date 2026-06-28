@@ -28,6 +28,8 @@ import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { createPublicClient, createWalletClient, custom, http, fallback, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
 import { arcTestnet } from "viem/chains";
+import { useAccount, useChainId, useDisconnect, useSwitchChain } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
 
 // Monkeypatch EIP-3009 signature generation to add a 1-day (86400s) buffer to the validBefore timestamp.
 // This ensures that the signed signature's validity exceeds the accepted maxTimeoutSeconds by 24 hours,
@@ -134,41 +136,8 @@ const createBurnIntent = (
   };
 };
 
-const switchNetwork = async (
-  chainId: number,
-  chainName: string,
-  rpcUrl: string,
-  nativeCurrency: any,
-  blockExplorer: string
-) => {
-  if (!(window as any).ethereum) return;
-  const chainIdHex = "0x" + chainId.toString(16);
-  try {
-    await (window as any).ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: chainIdHex }],
-    });
-  } catch (switchError: any) {
-    if (switchError.code === 4902) {
-      try {
-        await (window as any).ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{
-            chainId: chainIdHex,
-            chainName,
-            rpcUrls: [rpcUrl],
-            nativeCurrency,
-            blockExplorerUrls: [blockExplorer],
-          }],
-        });
-      } catch (addError: any) {
-        throw new Error(`Failed to add network ${chainName}: ${addError.message}`);
-      }
-    } else {
-      throw switchError;
-    }
-  }
-};
+// switchNetwork is now declared locally inside App to use Wagmi's switchChainAsync hook
+
 
 const formatWatchTime = (seconds: number) => {
   if (seconds < 60) return `${seconds}s`;
@@ -179,6 +148,57 @@ const formatWatchTime = (seconds: number) => {
 };
 
 export default function App() {
+  // Wagmi & RainbowKit Hooks
+  const { address: wagmiAddress, isConnected: isWagmiConnected, connector } = useAccount();
+  const wagmiChainId = useChainId();
+  const { disconnect: wagmiDisconnect } = useDisconnect();
+  const { switchChainAsync } = useSwitchChain();
+  const { openConnectModal } = useConnectModal();
+
+  // Sync Wagmi connection to local states
+  useEffect(() => {
+    if (isWagmiConnected && wagmiAddress) {
+      setConnectedAddress(wagmiAddress);
+    } else {
+      setConnectedAddress("");
+    }
+  }, [wagmiAddress, isWagmiConnected]);
+
+  useEffect(() => {
+    if (isWagmiConnected && wagmiChainId) {
+      setConnectedChainId(wagmiChainId);
+    } else {
+      setConnectedChainId(null);
+    }
+  }, [wagmiChainId, isWagmiConnected]);
+
+  // Helper to switch network via Wagmi switchChainAsync hook
+  const switchNetwork = async (
+    chainId: number,
+    chainName: string,
+    _rpcUrl?: string,
+    _nativeCurrency?: any,
+    _blockExplorer?: string
+  ) => {
+    try {
+      await switchChainAsync({ chainId });
+    } catch (err: any) {
+      throw new Error(`Failed to switch to ${chainName}: ${err.message}`);
+    }
+  };
+
+  // Helper to get active Web3 provider from active connector or window.ethereum
+  const getEthereumProvider = async () => {
+    if (connector) {
+      const provider = await connector.getProvider();
+      if (provider) return provider;
+    }
+    if (typeof window !== "undefined" && (window as any).ethereum) {
+      return (window as any).ethereum;
+    }
+    throw new Error("No Web3 provider found. Please connect your wallet.");
+  };
+
   const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator" | "docs">("landing");
   const [docsSection, setDocsSection] = useState<"overview" | "viewers" | "creators" | "architecture">("overview");
   
@@ -618,37 +638,7 @@ export default function App() {
     }
   }, [connectedAddress, streamsList]);
 
-  // Auto-connect MetaMask wallet if already authorized
-  useEffect(() => {
-    const checkMetaMaskConnected = async () => {
-      if (typeof window !== "undefined" && (window as any).ethereum) {
-        try {
-          const accounts = await (window as any).ethereum.request({ method: "eth_accounts" });
-          if (accounts && accounts.length > 0) {
-            setConnectedAddress(accounts[0]);
-            const chainIdHex = await (window as any).ethereum.request({ method: "eth_chainId" });
-            setConnectedChainId(parseInt(chainIdHex, 16));
-            
-            // Listen for changes
-            (window as any).ethereum.on("accountsChanged", (accs: string[]) => {
-              if (accs.length > 0) {
-                setConnectedAddress(accs[0]);
-              } else {
-                setConnectedAddress("");
-              }
-            });
-
-            (window as any).ethereum.on("chainChanged", (hexId: string) => {
-              setConnectedChainId(parseInt(hexId, 16));
-            });
-          }
-        } catch (e) {
-          console.warn("Failed to check MetaMask connection:", e);
-        }
-      }
-    };
-    checkMetaMaskConnected();
-  }, []);
+  // Wallet auto-connection is now handled automatically by RainbowKit/Wagmi
 
   // Fetch viewer balance periodically
   useEffect(() => {
@@ -755,14 +745,15 @@ export default function App() {
       }
 
       setSuccessMsg(`Submitting platform fee claim transaction on ${toConfig.chain.name}...`);
+      const provider = await getEthereumProvider();
       const destWallet = createWalletClient({
         account: connectedAddress as `0x${string}`,
         chain: toConfig.chain,
-        transport: custom((window as any).ethereum)
+        transport: custom(provider)
       });
       const destPublic = createPublicClient({
         chain: toConfig.chain,
-        transport: custom((window as any).ethereum)
+        transport: custom(provider)
       });
 
       const mintTx = await destWallet.writeContract({
@@ -960,10 +951,11 @@ export default function App() {
     setIsDepositing(true);
     try {
       const amountVal = parseUnits(depositAmount, 6);
+      const provider = await getEthereumProvider();
       const walletClient = createWalletClient({
         account: connectedAddress as `0x${string}`,
         chain: arcTestnet,
-        transport: custom((window as any).ethereum)
+        transport: custom(provider)
       });
       const publicClient = createPublicClient({
         chain: arcTestnet,
@@ -1090,10 +1082,11 @@ export default function App() {
         );
       }
 
+      const provider = await getEthereumProvider();
       const walletClient = createWalletClient({
         account: connectedAddress as `0x${string}`,
         chain: arcTestnet,
-        transport: custom((window as any).ethereum)
+        transport: custom(provider)
       });
 
       const typesConfig = {
@@ -1186,14 +1179,15 @@ export default function App() {
 
       // 6. Execute the gatewayMint contract write on destination chain via MetaMask
       setSuccessMsg(`Submitting claim transaction on ${toConfig.chain.name}...`);
+      const claimProvider = await getEthereumProvider();
       const destWallet = createWalletClient({
         account: connectedAddress as `0x${string}`,
         chain: toConfig.chain,
-        transport: custom((window as any).ethereum)
+        transport: custom(claimProvider)
       });
       const destPublic = createPublicClient({
         chain: toConfig.chain,
-        transport: custom((window as any).ethereum)
+        transport: custom(claimProvider)
       });
 
       const mintTx = await destWallet.writeContract({
@@ -1378,72 +1372,19 @@ export default function App() {
   };
 
   const connectWallet = async () => {
-    if (typeof window === "undefined" || !(window as any).ethereum) {
-      setErrorMsg("MetaMask or compatible Web3 wallet not found in browser.");
-      return;
-    }
-    try {
+    if (openConnectModal) {
       setErrorMsg("");
-      const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
-      if (accounts && accounts.length > 0) {
-        setConnectedAddress(accounts[0]);
-        
-        // Fetch chainId
-        const chainIdHex = await (window as any).ethereum.request({ method: "eth_chainId" });
-        const chainId = parseInt(chainIdHex, 16);
-        setConnectedChainId(chainId);
-        
-        setSuccessMsg(`Wallet connected: ${accounts[0]}`);
-
-        // Listen for changes
-        (window as any).ethereum.on("accountsChanged", (accs: string[]) => {
-          if (accs.length > 0) {
-            setConnectedAddress(accs[0]);
-          } else {
-            setConnectedAddress("");
-          }
-        });
-
-        (window as any).ethereum.on("chainChanged", (hexId: string) => {
-          setConnectedChainId(parseInt(hexId, 16));
-        });
-
-        // Ensure we are on Arc Testnet
-        if (chainId !== 5042002) {
-          await ensureArcNetwork();
-        }
-      }
-    } catch (err: any) {
-      setErrorMsg(`Failed to connect wallet: ${err.message}`);
+      openConnectModal();
+    } else {
+      setErrorMsg("Wallet connection modal is not available yet. Please try again.");
     }
   };
 
   const ensureArcNetwork = async () => {
-    if (!(window as any).ethereum) return;
     try {
-      await (window as any).ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: "0x4ceca2" }], // 5042002 in hex is 0x4ceca2
-      });
-    } catch (switchError: any) {
-      if (switchError.code === 4902) {
-        try {
-          await (window as any).ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [{
-              chainId: "0x4ceca2",
-              chainName: "Arc Testnet",
-              rpcUrls: [ARC_TESTNET_RPC],
-              nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
-              blockExplorerUrls: ["https://testnet.arcscan.app"],
-            }],
-          });
-        } catch (addError: any) {
-          setErrorMsg(`Please manually add the Arc Testnet to your MetaMask: ${addError.message}`);
-        }
-      } else {
-        setErrorMsg(`Failed to switch network: ${switchError.message}`);
-      }
+      await switchChainAsync({ chainId: 5042002 });
+    } catch (err: any) {
+      setErrorMsg(`Failed to switch to Arc Testnet: ${err.message}`);
     }
   };
 
@@ -2203,8 +2144,7 @@ export default function App() {
                       </button>
                       <button 
                         onClick={() => {
-                          setConnectedAddress("");
-                          setConnectedChainId(null);
+                          wagmiDisconnect();
                           setShowWalletDropdown(false);
                           setSuccessMsg("Wallet disconnected.");
                         }}
