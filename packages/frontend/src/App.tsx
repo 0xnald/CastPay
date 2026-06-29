@@ -200,7 +200,7 @@ export default function App() {
   };
 
   const [activeTab, setActiveTab] = useState<"landing" | "viewer" | "creator" | "docs">("landing");
-  const [docsSection, setDocsSection] = useState<"overview" | "viewers" | "creators" | "architecture">("overview");
+  const [docsSection, setDocsSection] = useState<"overview" | "viewers" | "creators" | "architecture" | "owncast-guide">("overview");
   
   // App States
   const [isPlaying, setIsPlaying] = useState(false);
@@ -321,12 +321,16 @@ export default function App() {
   const [showWalletDropdown, setShowWalletDropdown] = useState(false);
 
   // Client-side Router Helper
-  const navigate = (tab: "landing" | "viewer" | "creator" | "docs") => {
+  const navigate = (tab: "landing" | "viewer" | "creator" | "docs", docSection?: "overview" | "viewers" | "creators" | "architecture" | "owncast-guide") => {
     setActiveTab(tab);
     let path = "/";
     if (tab === "viewer") path = "/viewerportal";
     else if (tab === "creator") path = "/dashboard";
-    else if (tab === "docs") path = "/docs";
+    else if (tab === "docs") {
+      const sec = docSection || docsSection || "overview";
+      path = `/docs/${sec}`;
+      setDocsSection(sec);
+    }
     
     if (window.location.pathname !== path) {
       window.history.pushState({}, "", path);
@@ -337,8 +341,15 @@ export default function App() {
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname;
-      if (path === "/docs") {
+      if (path.startsWith("/docs")) {
         setActiveTab("docs");
+        const parts = path.split("/");
+        const sub = parts[2];
+        if (sub === "viewers") setDocsSection("viewers");
+        else if (sub === "creators") setDocsSection("creators");
+        else if (sub === "architecture") setDocsSection("architecture");
+        else if (sub === "owncast-guide" || sub === "OWNCAST_SETUP_GUIDE") setDocsSection("owncast-guide");
+        else setDocsSection("overview");
       } else if (path === "/dashboard") {
         setActiveTab("creator");
       } else if (path === "/viewerportal") {
@@ -353,7 +364,7 @@ export default function App() {
     handlePopState();
 
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [docsSection]);
 
   // Auto-dismiss alert notifications after 3.5 seconds
   useEffect(() => {
@@ -1672,32 +1683,39 @@ export default function App() {
           <h4 className="text-xs uppercase tracking-wider font-semibold text-secondary mb-4 px-2">Table of Contents</h4>
           <nav className="flex flex-col gap-1">
             <button 
-              onClick={() => setDocsSection("overview")}
+              onClick={() => navigate("docs", "overview")}
               className={`gitbook-nav-item ${docsSection === "overview" ? "active" : ""}`}
             >
               <BookOpen className="w-3.5 h-3.5" />
               1. Overview
             </button>
             <button 
-              onClick={() => setDocsSection("viewers")}
+              onClick={() => navigate("docs", "viewers")}
               className={`gitbook-nav-item ${docsSection === "viewers" ? "active" : ""}`}
             >
               <Users className="w-3.5 h-3.5" />
               2. Viewer Guide
             </button>
             <button 
-              onClick={() => setDocsSection("creators")}
+              onClick={() => navigate("docs", "creators")}
               className={`gitbook-nav-item ${docsSection === "creators" ? "active" : ""}`}
             >
               <Sliders className="w-3.5 h-3.5" />
               3. Creator Guide
             </button>
             <button 
-              onClick={() => setDocsSection("architecture")}
+              onClick={() => navigate("docs", "architecture")}
               className={`gitbook-nav-item ${docsSection === "architecture" ? "active" : ""}`}
             >
               <Cpu className="w-3.5 h-3.5" />
               4. Protocol Architecture
+            </button>
+            <button 
+              onClick={() => navigate("docs", "owncast-guide")}
+              className={`gitbook-nav-item ${docsSection === "owncast-guide" ? "active" : ""}`}
+            >
+              <Tv className="w-3.5 h-3.5 fill-current" />
+              5. Owncast Guide
             </button>
           </nav>
         </aside>
@@ -1945,6 +1963,109 @@ export default function App() {
                   </p>
                 </div>
               </div>
+            </article>
+          )}
+
+          {docsSection === "owncast-guide" && (
+            <article className="prose prose-invert">
+              <h1 className="font-serif text-3xl text-gold-bright mb-4">5. Owncast & OBS Local Gating Guide</h1>
+              <p className="text-secondary text-sm leading-relaxed mb-6">
+                This guide walks you through setting up a local video stream using <strong>Owncast</strong> (in Docker) and <strong>OBS Studio</strong>, exposing it securely to the internet, and gating access to the stream on <strong>castpay.app</strong> using pay-per-second USDC billing.
+              </p>
+
+              <div className="border-l-2 border-gold-accent pl-4 mb-6">
+                <h3 className="text-sm font-semibold uppercase text-gold-accent tracking-wide mb-1">Prerequisites</h3>
+                <ul className="list-disc pl-5 text-xs text-secondary space-y-1">
+                  <li><strong>Docker Desktop:</strong> Running on your local machine.</li>
+                  <li><strong>OBS Studio:</strong> Or any RTMP-compatible stream publishing software.</li>
+                  <li><strong>MetaMask:</strong> Configured for the Arc Testnet.</li>
+                </ul>
+              </div>
+
+              <section className="mb-6">
+                <h2 className="text-lg text-gold-accent font-semibold mb-2">Step 1: Run Owncast via Docker</h2>
+                <p className="text-secondary text-xs leading-relaxed mb-3">
+                  Open your terminal (PowerShell on Windows, or Bash on macOS/Linux) and run the following command to start Owncast:
+                </p>
+                <pre className="bg-[#14120f] border border-gold-muted/10 p-3 rounded-lg text-xs font-mono text-gold-bright mb-4 overflow-x-auto">
+                  {`docker run --name owncast -d -p 8080:8080 -p 1935:1935 -v owncast_data:/app/data owncast/owncast:latest`}
+                </pre>
+                <p className="text-[10px] text-secondary">
+                  This runs Owncast in the background, routing the web UI to port 8080 and the RTMP ingest feed to port 1935.
+                </p>
+              </section>
+
+              <section className="mb-6">
+                <h2 className="text-lg text-gold-accent font-semibold mb-2">Step 2: Configure OBS & Start Streaming</h2>
+                <ol className="list-decimal pl-5 text-secondary text-xs space-y-2">
+                  <li>Open <strong><code>http://localhost:8080/admin</code></strong> in your browser.</li>
+                  <li>Log in with administrative privileges (check your docker logs for the temporary password, or use the default configuration).</li>
+                  <li>Navigate to <strong>Configuration &rarr; Stream Settings</strong> and copy your unique <strong>Stream Key</strong>.</li>
+                  <li>Open <strong>OBS Studio</strong> and open <strong>Settings &rarr; Stream</strong>:</li>
+                  <ul className="list-disc pl-5 mt-1 space-y-1">
+                    <li><strong>Service:</strong> Select <code>Custom...</code></li>
+                    <li><strong>Server:</strong> <code>rtmp://localhost/live</code></li>
+                    <li><strong>Stream Key:</strong> Paste the key you copied from your Owncast admin panel.</li>
+                  </ul>
+                  <li>Click <strong>Start Streaming</strong> in OBS. The local player at <code>http://localhost:8080</code> will show your live stream in a few seconds.</li>
+                </ol>
+              </section>
+
+              <section className="mb-6">
+                <h2 className="text-lg text-gold-accent font-semibold mb-2">Step 3: Expose Owncast to the Internet</h2>
+                <p className="text-secondary text-xs leading-relaxed mb-4">
+                  Because <strong>castpay.app</strong> runs on a remote cloud server, it cannot reach your local machine directly. You must open a public tunnel to forward requests to your local port <code>8080</code>.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div className="bg-[#14120f] border border-gold-muted/10 p-4 rounded-lg">
+                    <h4 className="text-xs uppercase font-semibold text-gold-accent mb-2">Option A: localhost.run (SSH-based)</h4>
+                    <p className="text-[11px] text-secondary mb-3">
+                      Uses your native OS SSH client. Safe, zero-install, and requires no account registration.
+                    </p>
+                    <pre className="bg-black/40 border border-gold-muted/10 p-2 rounded text-[10px] font-mono text-gold-bright overflow-x-auto">
+                      {`ssh -R 80:localhost:8080 nokey@localhost.run`}
+                    </pre>
+                  </div>
+
+                  <div className="bg-[#14120f] border border-gold-muted/10 p-4 rounded-lg">
+                    <h4 className="text-xs uppercase font-semibold text-gold-accent mb-2">Option B: localtunnel (Node/NPM)</h4>
+                    <p className="text-[11px] text-secondary mb-3">
+                      Alternative tunneling method using NPM.
+                    </p>
+                    <pre className="bg-black/40 border border-gold-muted/10 p-2 rounded text-[10px] font-mono text-gold-bright overflow-x-auto">
+                      {`npx localtunnel --port 8080`}
+                    </pre>
+                  </div>
+                </div>
+                <p className="text-[10px] text-secondary">
+                  Copy the resulting public URL (e.g. <code>https://your-tunnel-id.localhost.run</code>).
+                </p>
+              </section>
+
+              <section className="mb-6">
+                <h2 className="text-lg text-gold-accent font-semibold mb-2">Step 4: Register & Gate your Stream on CastPay</h2>
+                <ol className="list-decimal pl-5 text-secondary text-xs space-y-2">
+                  <li>Navigate to <strong><code>https://castpay.app</code></strong>.</li>
+                  <li>Select the <strong>Creator Console</strong> tab, connect your wallet, and click <strong>Register Connected Wallet as Creator</strong>.</li>
+                  <li>In the <strong>Configure Platform Distribution</strong> card, enter:</li>
+                  <ul className="list-disc pl-5 mt-1 space-y-1">
+                    <li><strong>Platform Type:</strong> <code>Owncast Live (HLS Proxy Gate)</code></li>
+                    <li><strong>Secret Owncast HLS Stream URL:</strong> Paste your public tunnel URL and append <code>/hls/stream.m3u8</code> (e.g., <code>https://your-tunnel-id.localhost.run/hls/stream.m3u8</code>).</li>
+                    <li><strong>Billing Rate:</strong> e.g., <code>0.0001</code> USDC/second.</li>
+                  </ul>
+                  <li>Click <strong>Go Live</strong> to activate the payment gating proxy.</li>
+                </ol>
+              </section>
+
+              <section className="mb-4">
+                <h2 className="text-lg text-gold-accent font-semibold mb-2">Step 5: Test Gated Access (Viewer Portal)</h2>
+                <ol className="list-decimal pl-5 text-secondary text-xs space-y-2">
+                  <li>Open the <strong>Viewer Portal</strong> in a new browser tab or device.</li>
+                  <li>Deposit some USDC into the gateway balance, select your stream, and click <strong>Pay & Watch</strong>.</li>
+                  <li>Your local stream will load and play, with micro-transactions automatically validating and settling in the background.</li>
+                </ol>
+              </section>
             </article>
           )}
         </div>
