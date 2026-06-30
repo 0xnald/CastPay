@@ -305,7 +305,11 @@ async function getGatewayBalances(address: `0x${string}`) {
 }
 
 // Endpoint: root server info
-app.get("/", (req, res) => {
+app.get("/", (req, res, next) => {
+  const frontendDistPath = path.resolve(__dirname, "../../frontend/dist");
+  if (fs.existsSync(frontendDistPath)) {
+    return next();
+  }
   res.json({
     status: "online",
     name: "CastPay Payment Sidecar",
