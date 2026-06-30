@@ -56,6 +56,7 @@ Choose the platform type that matches your setup:
 
 #### A. Owncast (Live HLS Proxy)
 * **Setup**: Enter your display name, secret Owncast stream playlist URL (e.g., `http://localhost:8080/hls/stream.m3u8`), and your billing rate (e.g. `0.0001` USDC/sec).
+* **Self-Hosted Sidecar (Docker Compose)**: To run both services in one command, copy the `docker-compose.yml` file to your server, configure your payout keys in `.env.local`, and run `docker compose up -d`. You can then access the CastPay dashboard locally on port `3002`, and configure your secret Owncast stream URL to `http://owncast:8080/hls/stream.m3u8`.
 * **Launch**: Click **Go Live**. CastPay starts proxying HLS video segments in-memory, masking your private server URL and gating access.
 
 #### B. Jellyfin (VOD Webhook Sidecar)

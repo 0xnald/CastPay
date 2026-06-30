@@ -53,6 +53,39 @@ CastPay is a non-custodial pay-per-second and pay-per-minute settlement sidecar 
 
 ---
 
+## 🐳 Self-Hosted Sidecar Setup (Docker Compose)
+
+Streamers can run both Owncast and the CastPay sidecar in a single command using Docker Compose, without having to build the entire monorepo from source.
+
+### 1. Prerequisites
+- Docker Desktop installed and running.
+
+### 2. Configure Environment Variables
+Create a `.env.local` file in the project folder with your payout configuration:
+```env
+SELLER_ADDRESS=0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA # Payout Wallet Address
+SELLER_PRIVATE_KEY=your_private_key_here # Required for backend settlements
+RPC=https://rpc.testnet.arc.network
+```
+
+### 3. Launch the Stack
+Run the following command in the project folder:
+```bash
+docker compose up --build -d
+```
+This automatically builds the CastPay sidecar container and launches the official Owncast service in a shared bridge network.
+- **Owncast Web UI**: `http://localhost:8080`
+- **CastPay Sidecar Portal**: `http://localhost:3002`
+
+### 4. Configure Gating
+1. Get your stream key from the Owncast admin panel at `http://localhost:8080/admin` and start streaming from OBS to `rtmp://localhost/live`.
+2. Open `http://localhost:3002` in your browser.
+3. Register your creator profile, and set the HLS Stream URL to:
+   `http://owncast:8080/hls/stream.m3u8`
+4. Click **Go Live** and share the viewer link with your audience!
+
+---
+
 ## 🛠️ Local Development & Setup
 
 ### Prerequisites

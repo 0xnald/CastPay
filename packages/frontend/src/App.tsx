@@ -1970,8 +1970,20 @@ export default function App() {
             <article className="prose prose-invert">
               <h1 className="font-serif text-3xl text-gold-bright mb-4">5. Owncast & OBS Local Gating Guide</h1>
               <p className="text-secondary text-sm leading-relaxed mb-6">
-                This guide walks you through setting up a local video stream using <strong>Owncast</strong> (in Docker) and <strong>OBS Studio</strong>, exposing it securely to the internet, and gating access to the stream on <strong>castpay.app</strong> using pay-per-second USDC billing.
+                This guide walks you through setting up a local video stream using <strong>Owncast</strong> (in Docker) and <strong>OBS Studio</strong>, exposing it securely to the internet, and gating access using pay-per-second USDC billing. You can choose between using our hosted platform at <strong>castpay.app</strong> or running the completely unified <strong>Self-Hosted Sidecar (Docker Compose)</strong>.
               </p>
+
+              <div className="bg-gold-accent/5 border border-gold-muted/20 p-4 rounded-lg mb-6 text-xs text-secondary leading-relaxed">
+                <h4 className="text-xs uppercase font-semibold text-gold-accent mb-2">💡 Quick Start: Self-Hosted Docker Compose Sidecar</h4>
+                <p className="mb-2">
+                  If you want to run everything locally in a single command, you can download our preconfigured <code>docker-compose.yml</code> file:
+                </p>
+                <ol className="list-decimal pl-5 space-y-1">
+                  <li>Configure your payout settings inside a <code>.env.local</code> file in your folder (<code>SELLER_ADDRESS</code>, <code>SELLER_PRIVATE_KEY</code>).</li>
+                  <li>Run <code>docker compose up --build -d</code>. This starts Owncast on port <code>8080</code> and the CastPay portal on port <code>3002</code>.</li>
+                  <li>Stream from OBS to <code>rtmp://localhost/live</code> and open <code>http://localhost:3002</code> to connect MetaMask and register your stream using the local container target: <code>http://owncast:8080/hls/stream.m3u8</code>.</li>
+                </ol>
+              </div>
 
               <div className="border-l-2 border-gold-accent pl-4 mb-6">
                 <h3 className="text-sm font-semibold uppercase text-gold-accent tracking-wide mb-1">Prerequisites</h3>
