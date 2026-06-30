@@ -1976,13 +1976,17 @@ export default function App() {
               <div className="bg-gold-accent/5 border border-gold-muted/20 p-4 rounded-lg mb-6 text-xs text-secondary leading-relaxed">
                 <h4 className="text-xs uppercase font-semibold text-gold-accent mb-2">💡 Quick Start: Self-Hosted Docker Compose Sidecar</h4>
                 <p className="mb-2">
-                  If you want to run everything locally in a single command, you can download our preconfigured <code>docker-compose.yml</code> file:
+                  To run both Owncast and the CastPay sidecar in a single command during the current community testing phase:
                 </p>
                 <ol className="list-decimal pl-5 space-y-1">
-                  <li>Configure your payout settings inside a <code>.env.local</code> file in your folder (<code>SELLER_ADDRESS</code>, <code>SELLER_PRIVATE_KEY</code>).</li>
-                  <li>Run <code>docker compose up --build -d</code>. This starts Owncast on port <code>8080</code> and the CastPay portal on port <code>3002</code>.</li>
+                  <li>Clone the repository to get the build files: <code>git clone https://github.com/0xnald/CastPay.git</code> and navigate inside <code>cd CastPay</code>.</li>
+                  <li>Configure your payout settings inside a <code>.env.local</code> file in the folder (<code>SELLER_ADDRESS</code>, <code>SELLER_PRIVATE_KEY</code>).</li>
+                  <li>Run <code>docker compose up --build -d</code>. This compiles the container locally and starts Owncast on port <code>8080</code> and the CastPay portal on port <code>3002</code>.</li>
                   <li>Stream from OBS to <code>rtmp://localhost/live</code> and open <code>http://localhost:3002</code> to connect MetaMask and register your stream using the local container target: <code>http://owncast:8080/hls/stream.m3u8</code>.</li>
                 </ol>
+                <p className="mt-2 text-[10px] text-gold-muted/70">
+                  * Note: In the upcoming official public release, users will pull the pre-compiled <code>0xnald/castpay-sidecar:latest</code> image directly from Docker Hub without needing to clone the repository.
+                </p>
               </div>
 
               <div className="border-l-2 border-gold-accent pl-4 mb-6">

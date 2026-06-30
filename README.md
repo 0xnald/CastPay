@@ -55,13 +55,29 @@ CastPay is a non-custodial pay-per-second and pay-per-minute settlement sidecar 
 
 ## 🐳 Self-Hosted Sidecar Setup (Docker Compose)
 
-Streamers can run both Owncast and the CastPay sidecar in a single command using Docker Compose, without having to build the entire monorepo from source.
+Streamers can run both Owncast and the CastPay sidecar in a single command using Docker Compose.
 
-### 1. Prerequisites
-- Docker Desktop installed and running.
+> [!NOTE]
+> **Community Testing Phase**:
+> Because CastPay is currently in an active community testing phase, the pre-built sidecar image has not been published to a public registry (like Docker Hub) yet. During this phase, streamers need to clone the repository to compile the image locally.
+>
+> In the upcoming official public release, users will NOT need to clone the repository. The `docker-compose.yml` will be updated to pull the pre-compiled image directly from Docker Hub:
+> ```yaml
+>   castpay-sidecar:
+>     image: 0xnald/castpay-sidecar:latest  # Pulls pre-built image directly from Docker Hub
+>     container_name: castpay-sidecar
+>     # ...
+> ```
+
+### 1. Clone the Repository
+Open a terminal on your server or VPS and run:
+```bash
+git clone https://github.com/0xnald/CastPay.git
+cd CastPay
+```
 
 ### 2. Configure Environment Variables
-Create a `.env.local` file in the project folder with your payout configuration:
+Create a `.env.local` file inside the `CastPay` folder with your payout configuration:
 ```env
 SELLER_ADDRESS=0xYourEVMWalletAddressHere # Payout Wallet Address
 SELLER_PRIVATE_KEY=your_private_key_here # Required for backend settlements
@@ -69,11 +85,11 @@ RPC=https://rpc.testnet.arc.network
 ```
 
 ### 3. Launch the Stack
-Run the following command in the project folder:
+Run the following command in the `CastPay` folder:
 ```bash
 docker compose up --build -d
 ```
-This automatically builds the CastPay sidecar container and launches the official Owncast service in a shared bridge network.
+This automatically builds the CastPay sidecar container locally and launches the official Owncast service in a shared bridge network.
 - **Owncast Web UI**: `http://localhost:8080`
 - **CastPay Sidecar Portal**: `http://localhost:3002`
 
