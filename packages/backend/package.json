@@ -3,13 +3,25 @@
   "version": "1.0.0",
   "description": "CastPay - Backend payment verification sidecar",
   "main": "dist/server.js",
+  "bin": "dist/server.js",
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "build": "tsc",
+    "build:binary": "pkg . --out-path dist/bin",
     "start": "node dist/server.js",
     "generate-wallets": "ts-node src/generate-wallets.ts",
     "test-stream": "ts-node src/test-stream.ts",
     "clean": "rimraf dist"
+  },
+  "pkg": {
+    "assets": [
+      "../frontend/dist/**/*"
+    ],
+    "targets": [
+      "node18-win-x64",
+      "node18-linux-x64",
+      "node18-macos-x64"
+    ]
   },
   "dependencies": {
     "@circle-fin/x402-batching": "^2.0.4",

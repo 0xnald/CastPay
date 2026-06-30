@@ -1083,6 +1083,20 @@ app.get("/api/stream/:creatorAddress/*", async (req, res) => {
   }
 });
 
+// Serve frontend static assets in production
+const frontendDistPath = path.resolve(__dirname, "../../frontend/dist");
+if (fs.existsSync(frontendDistPath)) {
+  console.log(`[CastPay] Serving static frontend from: ${frontendDistPath}`);
+  app.use(express.static(frontendDistPath));
+  
+  // SPA routing fallback: serve index.html for all non-API paths
+  app.get(/^(?!\/api).*$/, (req, res) => {
+    res.sendFile(path.join(frontendDistPath, "index.html"));
+  });
+} else {
+  console.log(`[CastPay] Frontend static directory not found at: ${frontendDistPath}. Running in api-only mode.`);
+}
+
 app.listen(PORT, () => {
   console.log(`========================================`);
   console.log(`CastPay Backend Server running on port ${PORT}`);

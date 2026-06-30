@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  owncast:
+    image: owncast/owncast:latest
+    container_name: owncast
+    ports:
+      - "8080:8080" # Web UI / HLS Stream
+      - "1935:1935" # RTMP Ingest Port
+    volumes:
+      - owncast_data:/app/data
+    restart: unless-stopped
+    networks:
+      - castpay-net
+
+  castpay-sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: castpay-sidecar
+    ports:
+      - "3001:3001" # CastPay API & Web Interface
+    environment:
+      - PORT=3001
+      - SELLER_ADDRESS=0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA # Replace with your Creator payout address
+      - SELLER_PRIVATE_KEY=your_private_key_here # Required for settling micro-transactions in the background
+      - STATE_FILE_PATH=/app/packages/backend/data/state.json
+      - RPC=https://rpc.testnet.arc.network
+    volumes:
+      - castpay_data:/app/packages/backend/data
+    depends_on:
+      - owncast
+    restart: unless-stopped
+    networks:
+      - castpay-net
+
+volumes:
+  owncast_data:
+  castpay_data:
+
+networks:
+  castpay-net:
+    driver: bridge
