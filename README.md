@@ -63,7 +63,7 @@ Streamers can run both Owncast and the CastPay sidecar in a single command using
 ### 2. Configure Environment Variables
 Create a `.env.local` file in the project folder with your payout configuration:
 ```env
-SELLER_ADDRESS=0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA # Payout Wallet Address
+SELLER_ADDRESS=0xYourEVMWalletAddressHere # Payout Wallet Address
 SELLER_PRIVATE_KEY=your_private_key_here # Required for backend settlements
 RPC=https://rpc.testnet.arc.network
 ```
