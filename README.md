@@ -11,7 +11,7 @@ CastPay is a non-custodial pay-per-second and pay-per-minute settlement sidecar 
 ## 🚀 Key Engineering & Architecture Features
 
 1. **Non-Custodial Micropayments (Zero MetaMask Popups)**:
-   High-frequency pay-per-second streaming cannot prompt MetaMask signatures repeatedly. CastPay generates a local, ephemeral **Session Key** in the browser. The viewer funds this session balance via `depositFor(usdc, sessionAddress, amount)` on the Gateway contract using either Circle User-Controlled Wallets or the MetaMask fallback. The browser then signs high-frequency heartbeats popup-free.
+   High-frequency pay-per-second streaming cannot prompt MetaMask signatures repeatedly. CastPay generates a local, ephemeral **Session Key** in the browser. The viewer makes a single MetaMask transaction to fund this session balance via `depositFor(usdc, sessionAddress, amount)` on the Gateway contract. The browser then signs high-frequency heartbeats popup-free.
 
 2. **Premium Glassmorphic Design System**:
    The entire portal utilizes custom CSS variables, heavy backdrop filters (`blur(16px)`), semi-transparent dark backgrounds (`rgba(20, 18, 15, 0.55)`), muted gold borders (`rgba(197, 168, 128, 0.12)`), and custom ambient glow decorations. Interaction states feature tactile scaling transitions (shrinking to `scale(0.96)` on click) and sticky header scroll-fades.
@@ -25,7 +25,7 @@ CastPay is a non-custodial pay-per-second and pay-per-minute settlement sidecar 
    EIP-3009 does not support multiple payees in a single pre-authorized signature. To avoid forcing viewers to sign two separate transactions per heartbeat (which doubles RPC calls and chokes browser event loops), the viewer pays the full amount to the creator's gateway balance. Upon withdrawal, the creator signs two separate `BurnIntent` payloads sequentially (Net amount to creator, and 1.5% Platform Fee to the platform wallet).
 
 5. **Cross-Chain Minting (Arc L1 to Destination Chain)**:
-   Creators can use either Circle User-Controlled Wallets or MetaMask. Circle creators approve Gateway `BurnIntent` EIP-712 signatures through the Circle PIN challenge flow, the backend proxies them to Circle Gateway, and the frontend claims with `gatewayMint` using a Circle destination-chain wallet. MetaMask remains available as a fallback signer/claimer.
+   Creators sign their withdrawal intents in MetaMask. The backend proxies these burn intents to Circle Gateway on Arc L1, retrieving the attestation payload. The frontend then switches MetaMask to the destination chain (e.g. Base Sepolia) and triggers `gatewayMint` directly to receive the USDC funds.
 
 6. **Scale & Performance Optimizations**:
    - **Asynchronous settlements**: Signature verification is synchronous (~10ms), while on-chain gateway settlements run asynchronously in the background so segment delivery never blocks.
@@ -42,7 +42,7 @@ CastPay is a non-custodial pay-per-second and pay-per-minute settlement sidecar 
 │   │   ├── src/server.ts      # Express settlement server, segment proxy, & webhooks receiver
 │   │   └── package.json
 │   └── frontend
-│       ├── src/App.tsx        # React client app with Circle Wallet + MetaMask flows & SPA Router
+│       ├── src/App.tsx        # React client app with MetaMask EIP-712 signing & SPA Router
 │       ├── src/index.css      # Custom glassmorphic styling system & shrink animations
 │       ├── vercel.json        # SPA route fallback rewrites
 │       └── package.json
@@ -105,10 +105,8 @@ This automatically builds the CastPay sidecar container locally and launches the
 ## 🛠️ Local Development & Setup
 
 ### Prerequisites
-- Node.js (v22+)
-- Circle Developer Console API key and User-Controlled Wallet App ID for embedded viewer and creator wallets.
-- MetaMask wallet with some testnet gas and USDC if you want to test the fallback viewer deposit or creator flows.
-- Destination-chain gas for whichever wallet claims a cross-chain withdrawal. Circle creator withdrawals may create a destination-chain Circle wallet that needs testnet gas for `gatewayMint`.
+- Node.js (v18+)
+- MetaMask wallet with some testnet gas and USDC.
 
 ### 1. Installation
 Install all monorepo dependencies from the root directory:
@@ -122,19 +120,8 @@ Create a `.env.local` file in the root workspace folder:
 # Custom Canteen JSON-RPC Endpoint (provided during CLI setup)
 RPC="https://rpc.testnet.arc-node.thecanteenapp.com/v1/swrm_4ba1cb60eb915a5285d7d4fb29e0923321af16cb4f0e2257aa3920a3a33dab2f"
 
-# Frontend/backend connection
+# Backend server variables
 BACKEND_URL="http://localhost:3001"
-
-# Circle User-Controlled Wallets
-CIRCLE_API_KEY="your-circle-api-key"
-CIRCLE_BASE_URL="https://api.circle.com"
-VITE_CIRCLE_APP_ID="your-circle-user-controlled-wallet-app-id"
-VITE_CIRCLE_ENVIRONMENT="sandbox"
-
-# CORS for browser clients that call the backend
-FRONTEND_ORIGIN="http://localhost:3000"
-# Optional comma-separated production/preview origins
-CORS_ORIGINS="https://castpay.app"
 ```
 
 ### 3. Run Backend Settlement Server
@@ -148,7 +135,7 @@ npm run dev:backend
 # Start Vite React frontend on port 3000
 npm run dev:frontend
 ```
-Open `http://localhost:3000` to interact with the CastPay portal. In Circle Console, add both `http://localhost:3000` and your production domain, for example `https://castpay.app`, to the User-Controlled Wallet app allowed origins. The same Circle setup can be used in the Viewer Portal and Creator Console.
+Open `http://localhost:3000` to interact with the CastPay portal.
 
 ---
 
