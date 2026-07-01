@@ -1,37 +1,19 @@
 import express from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 import * as dotenv from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
-import { CHAIN_CONFIGS, GatewayClient } from "@circle-fin/x402-batching/client";
-import {
-  Blockchain,
-  initiateUserControlledWalletsClient,
-} from "@circle-fin/user-controlled-wallets";
-import { createPublicClient, http, fallback, formatUnits, parseUnits, erc20Abi, isAddress } from "viem";
+import { GatewayClient } from "@circle-fin/x402-batching/client";
+import { createPublicClient, http, fallback, formatUnits, erc20Abi } from "viem";
 import { arcTestnet } from "viem/chains";
 
-const REPO_ROOT = path.resolve(__dirname, "../../..");
-
 // Load environment variables from the monorepo root
-dotenv.config({ path: path.resolve(REPO_ROOT, ".env.local") });
+dotenv.config({ path: path.resolve(__dirname, "../../../.env.local") });
 
-const configuredStateFilePath = process.env.STATE_FILE_PATH;
-const primaryStateFilePath = configuredStateFilePath
-  ? path.resolve(REPO_ROOT, configuredStateFilePath)
-  : path.resolve(REPO_ROOT, "packages/backend/data/state.json");
-const legacyRelativeStateFilePath = configuredStateFilePath && !path.isAbsolute(configuredStateFilePath)
-  ? path.resolve(process.cwd(), configuredStateFilePath)
-  : undefined;
 const STATE_FILE_PATH =
-  legacyRelativeStateFilePath &&
-  legacyRelativeStateFilePath !== primaryStateFilePath &&
-  !fs.existsSync(primaryStateFilePath) &&
-  fs.existsSync(legacyRelativeStateFilePath)
-    ? legacyRelativeStateFilePath
-    : primaryStateFilePath;
+  process.env.STATE_FILE_PATH ||
+  (process.platform === "win32" ? path.resolve(__dirname, "../data/state.json") : "/app/packages/backend/data/state.json");
 
 fs.mkdirSync(path.dirname(STATE_FILE_PATH), { recursive: true });
 
@@ -39,28 +21,7 @@ fs.mkdirSync(path.dirname(STATE_FILE_PATH), { recursive: true });
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-const DEFAULT_ALLOWED_ORIGINS = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "https://castpay.app",
-];
-const configuredAllowedOrigins = [
-  process.env.FRONTEND_ORIGIN,
-  process.env.FRONTEND_URL,
-  ...(process.env.CORS_ORIGINS || "").split(","),
-]
-  .map((origin) => origin?.trim())
-  .filter((origin): origin is string => Boolean(origin));
-const allowedOrigins = new Set([...DEFAULT_ALLOWED_ORIGINS, ...configuredAllowedOrigins]);
-
 app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(null, false);
-  },
   exposedHeaders: ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE"],
 }));
 app.use(express.json());
@@ -72,74 +33,6 @@ const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
 const ARC_TESTNET_RPC = process.env.RPC || "https://rpc.testnet.arc.network";
 const ARC_TESTNET_DOMAIN = 26;
 const PLATFORM_WALLET = "0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA";
-const CIRCLE_BASE_URL = process.env.CIRCLE_BASE_URL || "https://api.circle.com";
-const CIRCLE_MAX_DEPOSIT_ATOMIC = 100_000_000n; // 100 USDC, 6 decimals, testnet safety guardrail.
-const CIRCLE_MAX_WITHDRAW_ATOMIC = 100_000_000n; // 100 USDC testnet Gateway withdrawal guardrail.
-const ZERO_BYTES32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
-
-const CIRCLE_CHAIN_CONFIGS = {
-  arcTestnet: {
-    appChain: "arcTestnet",
-    circleBlockchain: Blockchain.ArcTestnet,
-    domain: CHAIN_CONFIGS.arcTestnet.domain,
-    usdc: CHAIN_CONFIGS.arcTestnet.usdc,
-    gatewayWallet: CHAIN_CONFIGS.arcTestnet.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.arcTestnet.gatewayMinter,
-  },
-  baseSepolia: {
-    appChain: "baseSepolia",
-    circleBlockchain: Blockchain.BaseSepolia,
-    domain: CHAIN_CONFIGS.baseSepolia.domain,
-    usdc: CHAIN_CONFIGS.baseSepolia.usdc,
-    gatewayWallet: CHAIN_CONFIGS.baseSepolia.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.baseSepolia.gatewayMinter,
-  },
-  sepolia: {
-    appChain: "sepolia",
-    circleBlockchain: Blockchain.EthSepolia,
-    domain: CHAIN_CONFIGS.sepolia.domain,
-    usdc: CHAIN_CONFIGS.sepolia.usdc,
-    gatewayWallet: CHAIN_CONFIGS.sepolia.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.sepolia.gatewayMinter,
-  },
-  arbitrumSepolia: {
-    appChain: "arbitrumSepolia",
-    circleBlockchain: Blockchain.ArbSepolia,
-    domain: CHAIN_CONFIGS.arbitrumSepolia.domain,
-    usdc: CHAIN_CONFIGS.arbitrumSepolia.usdc,
-    gatewayWallet: CHAIN_CONFIGS.arbitrumSepolia.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.arbitrumSepolia.gatewayMinter,
-  },
-  optimismSepolia: {
-    appChain: "optimismSepolia",
-    circleBlockchain: Blockchain.OpSepolia,
-    domain: CHAIN_CONFIGS.optimismSepolia.domain,
-    usdc: CHAIN_CONFIGS.optimismSepolia.usdc,
-    gatewayWallet: CHAIN_CONFIGS.optimismSepolia.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.optimismSepolia.gatewayMinter,
-  },
-  avalancheFuji: {
-    appChain: "avalancheFuji",
-    circleBlockchain: Blockchain.AvaxFuji,
-    domain: CHAIN_CONFIGS.avalancheFuji.domain,
-    usdc: CHAIN_CONFIGS.avalancheFuji.usdc,
-    gatewayWallet: CHAIN_CONFIGS.avalancheFuji.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.avalancheFuji.gatewayMinter,
-  },
-  polygonAmoy: {
-    appChain: "polygonAmoy",
-    circleBlockchain: Blockchain.MaticAmoy,
-    domain: CHAIN_CONFIGS.polygonAmoy.domain,
-    usdc: CHAIN_CONFIGS.polygonAmoy.usdc,
-    gatewayWallet: CHAIN_CONFIGS.polygonAmoy.gatewayWallet,
-    gatewayMinter: CHAIN_CONFIGS.polygonAmoy.gatewayMinter,
-  },
-} as const;
-
-type CircleAppChain = keyof typeof CIRCLE_CHAIN_CONFIGS;
-const ALLOWED_CIRCLE_BLOCKCHAINS = new Set<string>(
-  Object.values(CIRCLE_CHAIN_CONFIGS).map((config) => config.circleBlockchain)
-);
 
 let sellerAddress = process.env.SELLER_ADDRESS as `0x${string}`;
 let sellerPrivateKey = process.env.SELLER_PRIVATE_KEY as `0x${string}` | undefined;
@@ -149,13 +42,6 @@ if (!sellerAddress || !sellerPrivateKey) {
 }
 
 const facilitator = new BatchFacilitatorClient();
-const circleWalletsClient = process.env.CIRCLE_API_KEY
-  ? initiateUserControlledWalletsClient({
-      apiKey: process.env.CIRCLE_API_KEY,
-      baseUrl: CIRCLE_BASE_URL,
-      userAgent: "CastPay/1.0.0",
-    })
-  : null;
 const publicClient = createPublicClient({
   chain: arcTestnet,
   transport: fallback([
@@ -179,16 +65,7 @@ const withdrawals: Array<{
   amount: string;
   destinationChain: string;
   destinationAddress: string;
-  creatorAddress?: string;
-  platformFee?: {
-    amount: string;
-    recipient: string;
-    spec: any;
-  };
-  attestation?: string | null;
-  circleSignature?: string | null;
-  gatewaySubmittedAt?: string;
-  status: "submitted" | "ready_to_claim" | "confirmed" | "failed";
+  status: "submitted" | "confirmed" | "failed";
   txHash: string | null;
   timestamp: string;
 }> = [];
@@ -236,7 +113,6 @@ interface PlatformFee {
   status: "pending_claim" | "claimed";
   txHash: string | null;
   timestamp: string;
-  withdrawalId?: string;
 }
 
 const activeStreams: ActiveStream[] = [];
@@ -325,278 +201,6 @@ const statsCache = new Map<string, CachedStats>();
 const CACHE_TTL_MS = 30000; // Cache segments for 30 seconds
 const PLAYLIST_CACHE_TTL_MS = 2000; // Cache playlists for 2 seconds
 const STATS_CACHE_TTL_MS = 10000; // Cache stats for 10 seconds
-
-const circleWalletLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-app.use("/api/circle", circleWalletLimiter);
-
-function validationError(message: string) {
-  const error = new Error(message);
-  (error as any).statusCode = 400;
-  return error;
-}
-
-function getRequiredString(body: any, field: string, minLength = 1, maxLength = 4096): string {
-  const value = body?.[field];
-  if (typeof value !== "string") {
-    throw validationError(`${field} must be a string`);
-  }
-  const trimmed = value.trim();
-  if (trimmed.length < minLength || trimmed.length > maxLength) {
-    throw validationError(`${field} must be between ${minLength} and ${maxLength} characters`);
-  }
-  return trimmed;
-}
-
-function getCircleClientOrThrow() {
-  if (!circleWalletsClient) {
-    const error = new Error("Circle Wallets are not configured. Set CIRCLE_API_KEY on the backend.");
-    (error as any).statusCode = 503;
-    throw error;
-  }
-  return circleWalletsClient;
-}
-
-function getCircleResponseDetails(error: any) {
-  const data = error?.response?.data ?? error?.error?.response?.data ?? error?.data;
-  if (!data || typeof data !== "object") return undefined;
-
-  const details: Record<string, unknown> = {};
-  for (const key of ["code", "message", "errors", "details", "field"]) {
-    if (data[key] !== undefined) details[key] = data[key];
-  }
-
-  return Object.keys(details).length > 0 ? details : undefined;
-}
-
-function sendCircleError(res: express.Response, error: any, context: Record<string, unknown> = {}) {
-  const statusCode = typeof error?.statusCode === "number"
-    ? error.statusCode
-    : typeof error?.status === "number" && error.status >= 400 && error.status < 500
-      ? 400
-      : 502;
-  const code = typeof error?.code === "number" || typeof error?.code === "string" ? error.code : undefined;
-  const message = typeof error?.message === "string" ? error.message : "Circle Wallet request failed";
-  const details = getCircleResponseDetails(error);
-
-  console.error("[Circle Wallet] request failed", {
-    ...context,
-    statusCode,
-    code,
-    message,
-    details,
-  });
-
-  res.status(statusCode).json({
-    error: "Circle Wallet request failed",
-    code,
-    message,
-    details,
-  });
-}
-
-function validateCircleUserId(userId: string) {
-  if (!/^[A-Za-z0-9._:@-]{5,128}$/.test(userId)) {
-    throw validationError("userId must be 5-128 characters and contain only letters, numbers, '.', '_', ':', '@', or '-'.");
-  }
-}
-
-function validateUserToken(userToken: string) {
-  if (userToken.length < 20 || userToken.length > 4096) {
-    throw validationError("userToken has an invalid length");
-  }
-}
-
-function validateCircleWalletId(walletId: string) {
-  if (!/^[A-Za-z0-9_-]{6,128}$/.test(walletId)) {
-    throw validationError("walletId has an invalid format");
-  }
-}
-
-function validatePositiveAtomic(value: string, field: string, max: bigint, label: string): bigint {
-  if (!/^[1-9][0-9]*$/.test(value)) {
-    throw validationError(`${field} must be a positive integer string`);
-  }
-  const parsed = BigInt(value);
-  if (parsed > max) {
-    throw validationError(`${label} exceed the configured testnet safety limit`);
-  }
-  return parsed;
-}
-
-function validateAmountAtomic(amountAtomic: string): bigint {
-  return validatePositiveAtomic(amountAtomic, "amountAtomic", CIRCLE_MAX_DEPOSIT_ATOMIC, "Circle Wallet deposits");
-}
-
-function validateWithdrawAtomic(amountAtomic: string): bigint {
-  return validatePositiveAtomic(amountAtomic, "withdrawAtomic", CIRCLE_MAX_WITHDRAW_ATOMIC, "Circle Gateway withdrawals");
-}
-
-function padAddressToBytes32(address: string) {
-  return `0x${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
-}
-
-function getCircleChainByAppChain(appChain: string) {
-  const config = CIRCLE_CHAIN_CONFIGS[appChain as CircleAppChain];
-  if (!config) {
-    throw validationError("destinationChain is not supported for Circle Wallet creator operations");
-  }
-  return config;
-}
-
-function getCircleBlockchain(value: unknown) {
-  const blockchain = typeof value === "string" && value.trim() ? value.trim() : Blockchain.ArcTestnet;
-  if (!ALLOWED_CIRCLE_BLOCKCHAINS.has(blockchain)) {
-    throw validationError("blockchain is not supported for Circle Wallet operations");
-  }
-  return blockchain as Blockchain;
-}
-
-function validateHexBytes(value: string, field: string) {
-  if (!/^0x[0-9a-fA-F]*$/.test(value) || value.length < 4 || value.length % 2 !== 0) {
-    throw validationError(`${field} must be a valid hex bytes string`);
-  }
-}
-
-function validateBytes32Address(value: unknown, field: string) {
-  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
-    throw validationError(`${field} must be a bytes32 encoded address`);
-  }
-  const address = `0x${value.slice(-40)}`;
-  if (!isAddress(address)) {
-    throw validationError(`${field} must encode a valid EVM address`);
-  }
-  return value.toLowerCase();
-}
-
-function normalizeAtomicField(value: unknown, field: string) {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) return String(value);
-  if (typeof value === "string") return value;
-  throw validationError(`${field} must be a positive integer string`);
-}
-
-function parseTypedData(raw: unknown) {
-  if (typeof raw === "string") {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      throw validationError("typedData must be valid JSON");
-    }
-  }
-  if (!raw || typeof raw !== "object") {
-    throw validationError("typedData must be an object");
-  }
-  return raw as any;
-}
-
-function validateGatewayBurnTypedData(body: any) {
-  const destinationChain = getRequiredString(body, "destinationChain", 3, 32);
-  const destinationConfig = getCircleChainByAppChain(destinationChain);
-  const typedData = parseTypedData(body?.typedData);
-  const domain = typedData?.domain;
-  const message = typedData?.message;
-  const spec = message?.spec;
-
-  if (domain?.name !== "GatewayWallet" || domain?.version !== "1") {
-    throw validationError("typedData domain must be GatewayWallet v1");
-  }
-  if (typedData?.primaryType !== "BurnIntent") {
-    throw validationError("typedData primaryType must be BurnIntent");
-  }
-  if (!spec || typeof spec !== "object") {
-    throw validationError("typedData message.spec is required");
-  }
-
-  const sourceDepositor = validateBytes32Address(spec.sourceDepositor, "sourceDepositor");
-  const sourceSigner = validateBytes32Address(spec.sourceSigner, "sourceSigner");
-  if (sourceDepositor !== sourceSigner) {
-    throw validationError("sourceDepositor and sourceSigner must match");
-  }
-  if (Number(spec.sourceDomain) !== CIRCLE_CHAIN_CONFIGS.arcTestnet.domain) {
-    throw validationError("sourceDomain must be Arc Testnet");
-  }
-  if (Number(spec.destinationDomain) !== destinationConfig.domain) {
-    throw validationError("destinationDomain does not match destinationChain");
-  }
-  if (String(spec.sourceContract).toLowerCase() !== padAddressToBytes32(CIRCLE_CHAIN_CONFIGS.arcTestnet.gatewayWallet).toLowerCase()) {
-    throw validationError("sourceContract must be the Arc Testnet Gateway Wallet");
-  }
-  if (String(spec.destinationContract).toLowerCase() !== padAddressToBytes32(destinationConfig.gatewayMinter).toLowerCase()) {
-    throw validationError("destinationContract must be the selected Gateway Minter");
-  }
-  if (String(spec.sourceToken).toLowerCase() !== padAddressToBytes32(CIRCLE_CHAIN_CONFIGS.arcTestnet.usdc).toLowerCase()) {
-    throw validationError("sourceToken must be Arc Testnet USDC");
-  }
-  if (String(spec.destinationToken).toLowerCase() !== padAddressToBytes32(destinationConfig.usdc).toLowerCase()) {
-    throw validationError("destinationToken must be the selected chain USDC");
-  }
-  if (String(spec.destinationCaller).toLowerCase() !== ZERO_BYTES32) {
-    throw validationError("destinationCaller must be zero address for public claim");
-  }
-
-  validateWithdrawAtomic(normalizeAtomicField(spec.value, "spec.value"));
-  validatePositiveAtomic(normalizeAtomicField(message.maxFee, "maxFee"), "maxFee", 1_000_000n, "Circle Gateway withdrawal fees");
-
-  return JSON.stringify(typedData, (_, value) => typeof value === "bigint" ? value.toString() : value);
-}
-
-function buildCircleContractExecution(body: any) {
-  const action = getRequiredString(body, "action", 1, 32);
-  const walletId = getRequiredString(body, "walletId", 6, 128);
-  validateCircleWalletId(walletId);
-
-  if (action === "approve" || action === "depositFor") {
-    const amountAtomic = getRequiredString(body, "amountAtomic", 1, 32);
-    validateAmountAtomic(amountAtomic);
-
-    if (action === "approve") {
-      return {
-        walletId,
-        blockchain: Blockchain.ArcTestnet,
-        contractAddress: ARC_TESTNET_USDC,
-        abiFunctionSignature: "approve(address,uint256)",
-        abiParameters: [ARC_TESTNET_GATEWAY_WALLET, amountAtomic],
-      };
-    }
-
-    const sessionAddress = getRequiredString(body, "sessionAddress", 42, 42);
-    if (!isAddress(sessionAddress)) {
-      throw validationError("sessionAddress must be a valid EVM address");
-    }
-    return {
-      walletId,
-      blockchain: Blockchain.ArcTestnet,
-      contractAddress: ARC_TESTNET_GATEWAY_WALLET,
-      abiFunctionSignature: "depositFor(address,address,uint256)",
-      abiParameters: [ARC_TESTNET_USDC, sessionAddress, amountAtomic],
-    };
-  }
-
-  if (action === "gatewayMint") {
-    const destinationChain = getRequiredString(body, "destinationChain", 3, 32);
-    const destinationConfig = getCircleChainByAppChain(destinationChain);
-    const attestation = getRequiredString(body, "attestation", 4, 30000);
-    const circleSignature = getRequiredString(body, "circleSignature", 4, 30000);
-    validateHexBytes(attestation, "attestation");
-    validateHexBytes(circleSignature, "circleSignature");
-
-    return {
-      walletId,
-      blockchain: destinationConfig.circleBlockchain,
-      contractAddress: destinationConfig.gatewayMinter,
-      abiFunctionSignature: "gatewayMint(bytes,bytes)",
-      abiParameters: [attestation, circleSignature],
-    };
-  }
-
-  throw validationError("action must be approve, depositFor, or gatewayMint");
-}
 
 // Periodic cache cleanup
 setInterval(() => {
@@ -700,262 +304,6 @@ async function getGatewayBalances(address: `0x${string}`) {
   }
 }
 
-// Circle User-Controlled Wallet viewer routes
-app.post("/api/circle/users", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userId = getRequiredString(req.body, "userId", 5, 128);
-    validateCircleUserId(userId);
-
-    try {
-      const response = await client.createUser({ userId });
-      res.json({ success: true, alreadyExists: false, user: response.data ?? null });
-    } catch (error: any) {
-      if (error?.code === 155101) {
-        res.json({ success: true, alreadyExists: true, code: error.code, message: error.message });
-        return;
-      }
-      throw error;
-    }
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/token", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userId = getRequiredString(req.body, "userId", 5, 128);
-    validateCircleUserId(userId);
-
-    const response = await client.createUserToken({ userId });
-    res.json({
-      success: true,
-      userToken: response.data?.userToken,
-      encryptionKey: response.data?.encryptionKey,
-    });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/initialize", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    validateUserToken(userToken);
-
-    try {
-      const response = await client.createUserPinWithWallets({
-        userToken,
-        blockchains: [Blockchain.ArcTestnet],
-        accountType: "EOA" as any,
-      });
-      res.json({
-        success: true,
-        alreadyInitialized: false,
-        challengeId: response.data?.challengeId,
-        accountType: "EOA" as any,
-        blockchain: Blockchain.ArcTestnet,
-      });
-    } catch (error: any) {
-      if (error?.code === 155106) {
-        res.json({ success: true, alreadyInitialized: true, code: error.code, message: error.message });
-        return;
-      }
-      throw error;
-    }
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/wallets/create", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    const blockchain = getCircleBlockchain(req.body?.blockchain);
-    validateUserToken(userToken);
-
-    const response = await client.createWallet({
-      userToken,
-      blockchains: [blockchain],
-      accountType: "EOA" as any,
-    });
-    res.json({
-      success: true,
-      challengeId: response.data?.challengeId,
-      accountType: "EOA" as any,
-      blockchain,
-    });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/wallets", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    const blockchain = getCircleBlockchain(req.body?.blockchain);
-    validateUserToken(userToken);
-
-    const response = await client.listWallets({
-      userToken,
-      blockchain,
-    });
-    const wallets = response.data?.wallets ?? [];
-    res.json({ success: true, wallets, blockchain });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/wallets/balances", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    const walletId = getRequiredString(req.body, "walletId", 6, 128);
-    validateUserToken(userToken);
-    validateCircleWalletId(walletId);
-
-    const response = await client.getWalletTokenBalance({
-      userToken,
-      walletId,
-      tokenAddresses: [ARC_TESTNET_USDC],
-      includeAll: false,
-    });
-    const tokenBalances = response.data?.tokenBalances ?? [];
-    const usdcBalance = tokenBalances.find((balance: any) =>
-      balance?.token?.tokenAddress?.toLowerCase() === ARC_TESTNET_USDC.toLowerCase() ||
-      balance?.token?.symbol === "USDC"
-    );
-    res.json({ success: true, tokenBalances, usdcBalance });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/transactions/estimate-contract", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    validateUserToken(userToken);
-    const execution = buildCircleContractExecution(req.body);
-
-    const response = await client.estimateContractExecutionFee({
-      userToken,
-      contractAddress: execution.contractAddress,
-      abiFunctionSignature: execution.abiFunctionSignature,
-      abiParameters: execution.abiParameters,
-      source: { walletId: execution.walletId },
-    });
-    res.json({ success: true, estimate: response.data });
-  } catch (error) {
-    sendCircleError(res, error, {
-      route: "/api/circle/transactions/estimate-contract",
-      action: req.body?.action,
-    });
-  }
-});
-
-app.post("/api/circle/transactions/contract", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    validateUserToken(userToken);
-    const execution = buildCircleContractExecution(req.body);
-
-    const response = await client.createUserTransactionContractExecutionChallenge({
-      userToken,
-      walletId: execution.walletId,
-      contractAddress: execution.contractAddress,
-      abiFunctionSignature: execution.abiFunctionSignature,
-      abiParameters: execution.abiParameters,
-      fee: { type: "level", config: { feeLevel: "MEDIUM" as any } },
-    });
-    res.json({
-      success: true,
-      challengeId: response.data?.challengeId,
-      action: req.body?.action,
-      blockchain: execution.blockchain,
-    });
-  } catch (error) {
-    sendCircleError(res, error, {
-      route: "/api/circle/transactions/contract",
-      action: req.body?.action,
-    });
-  }
-});
-
-app.post("/api/circle/signatures/typed-data", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    const walletId = getRequiredString(req.body, "walletId", 6, 128);
-    const action = getRequiredString(req.body, "action", 1, 64);
-    validateUserToken(userToken);
-    validateCircleWalletId(walletId);
-    if (action !== "gatewayBurnIntent") {
-      throw validationError("action must be gatewayBurnIntent");
-    }
-
-    const data = validateGatewayBurnTypedData(req.body);
-    const response = await client.signTypedData({
-      userToken,
-      walletId,
-      data,
-      memo: "Authorize CastPay Circle Gateway withdrawal",
-    });
-    res.json({
-      success: true,
-      challengeId: response.data?.challengeId,
-      action,
-    });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/transactions/list", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    const walletId = getRequiredString(req.body, "walletId", 6, 128);
-    const blockchain = getCircleBlockchain(req.body?.blockchain);
-    validateUserToken(userToken);
-    validateCircleWalletId(walletId);
-
-    const response = await client.listTransactions({
-      userToken,
-      walletIds: [walletId],
-      blockchain,
-      pageSize: 10,
-      order: "DESC" as any,
-    });
-    res.json({ success: true, transactions: response.data?.transactions ?? [], blockchain });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
-app.post("/api/circle/transactions/status", async (req, res) => {
-  try {
-    const client = getCircleClientOrThrow();
-    const userToken = getRequiredString(req.body, "userToken", 20, 4096);
-    const transactionId = getRequiredString(req.body, "transactionId", 6, 128);
-    validateUserToken(userToken);
-
-    const response = await client.getTransaction({
-      userToken,
-      id: transactionId,
-    });
-    res.json({ success: true, transaction: response.data?.transaction ?? response.data });
-  } catch (error) {
-    sendCircleError(res, error);
-  }
-});
-
 // Endpoint: root server info
 app.get("/", (req, res, next) => {
   const frontendDistPath = path.resolve(__dirname, "../../frontend/dist");
@@ -1034,9 +382,7 @@ app.get("/api/stats", async (req, res) => {
 
     // Filter withdrawals by creator address
     const filteredWithdrawals = withdrawals.filter(w => 
-      !targetAddress ||
-      w.creatorAddress?.toLowerCase() === targetAddress.toLowerCase() ||
-      w.destinationAddress.toLowerCase() === targetAddress.toLowerCase()
+      !targetAddress || w.destinationAddress.toLowerCase() === targetAddress.toLowerCase()
     );
 
     const totalReceived = filteredHeartbeats.reduce((acc, curr) => acc + parseFloat(curr.amount), 0).toFixed(6);
@@ -1122,47 +468,15 @@ app.post("/api/withdraw", async (req, res) => {
   const spec = burnIntent.spec;
   const amountAtomic = spec.value;
   const recipientBytes32 = spec.destinationRecipient;
-  const sourceDepositorBytes32 = spec.sourceDepositor;
   const recipient = "0x" + recipientBytes32.slice(-40); // extract address from 32-byte pad
-  const creatorAddress = sourceDepositorBytes32 ? "0x" + sourceDepositorBytes32.slice(-40) : recipient;
   
   const amountFormatted = (parseFloat(amountAtomic) / 1_000_000).toFixed(6);
-
-  const transferItems: Array<{ burnIntent: any; signature: string }> = [{ burnIntent, signature }];
-  let platformFee: { amount: string; recipient: string; spec: any } | undefined;
-
-  if (feeBurnIntent || feeSignature) {
-    if (!feeBurnIntent || !feeSignature) {
-      return res.status(400).json({ error: "feeBurnIntent and feeSignature must be supplied together" });
-    }
-    const feeSpec = feeBurnIntent.spec;
-    if (!feeSpec || !feeSpec.destinationRecipient || !feeSpec.sourceDepositor) {
-      return res.status(400).json({ error: "Invalid feeBurnIntent format" });
-    }
-    const feeRecipient = "0x" + feeSpec.destinationRecipient.slice(-40);
-    const feeCreatorAddress = "0x" + feeSpec.sourceDepositor.slice(-40);
-    if (feeRecipient.toLowerCase() !== PLATFORM_WALLET.toLowerCase()) {
-      return res.status(400).json({ error: "Invalid platform fee recipient address" });
-    }
-    if (feeCreatorAddress.toLowerCase() !== creatorAddress.toLowerCase()) {
-      return res.status(400).json({ error: "Platform fee source depositor must match the creator withdrawal source" });
-    }
-
-    platformFee = {
-      amount: (parseFloat(feeSpec.value) / 1_000_000).toFixed(6),
-      recipient: feeRecipient,
-      spec: feeSpec,
-    };
-    transferItems.push({ burnIntent: feeBurnIntent, signature: feeSignature });
-  }
 
   withdrawals.push({
     id: withdrawalId,
     amount: amountFormatted,
     destinationChain,
     destinationAddress: recipient,
-    creatorAddress,
-    platformFee,
     status: "submitted",
     txHash: null,
     timestamp: new Date().toISOString(),
@@ -1173,40 +487,59 @@ app.post("/api/withdraw", async (req, res) => {
   try {
     const GATEWAY_API_TESTNET = "https://gateway-api-testnet.circle.com/v1";
 
-    const requiredAtomic = transferItems.reduce((acc, item) => {
-      const value = BigInt(normalizeAtomicField(item.burnIntent?.spec?.value, "burnIntent.spec.value"));
-      const maxFee = BigInt(normalizeAtomicField(item.burnIntent?.maxFee, "burnIntent.maxFee"));
-      return acc + value + maxFee;
-    }, 0n);
-    const gatewayBalance = await getGatewayBalances(creatorAddress as `0x${string}`);
-    const availableAtomic = parseUnits(gatewayBalance.available || "0", 6);
-    if (availableAtomic < requiredAtomic) {
-      throw validationError(`Insufficient Gateway available balance for withdrawal. Available ${formatUnits(availableAtomic, 6)} USDC, required ${formatUnits(requiredAtomic, 6)} USDC including Gateway max fees.`);
-    }
+    // Process the platform fee transfer in the background if it is supplied
+    if (feeBurnIntent && feeSignature) {
+      const feeSpec = feeBurnIntent.spec;
+      if (!feeSpec || !feeSpec.destinationRecipient) {
+        return res.status(400).json({ error: "Invalid feeBurnIntent format" });
+      }
+      const feeRecipient = "0x" + feeSpec.destinationRecipient.slice(-40);
+      if (feeRecipient.toLowerCase() !== PLATFORM_WALLET.toLowerCase()) {
+        return res.status(400).json({ error: "Invalid platform fee recipient address" });
+      }
 
-    // Submit net payout and platform fee together. One Gateway attestation prevents partial fee-only burns.
-    console.log(`[CastPay] Submitting Gateway withdrawal ${withdrawalId} for ${creatorAddress}: ${formatUnits(requiredAtomic, 6)} USDC including max fees`);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    let response: Awaited<ReturnType<typeof fetch>>;
-    try {
-      response = await fetch(`${GATEWAY_API_TESTNET}/transfer`, {
+      const feeAmountFormatted = (parseFloat(feeSpec.value) / 1_000_000).toFixed(6);
+      const feeId = `fee_${Date.now()}`;
+
+      fetch(`${GATEWAY_API_TESTNET}/transfer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
         body: JSON.stringify(
-          transferItems,
+          [{ burnIntent: feeBurnIntent, signature: feeSignature }],
           (_, v) => typeof v === "bigint" ? v.toString() : v
         )
+      }).then(r => r.json()).then(resData => {
+        console.log("[CastPay Platform Fee] Settle result:", resData);
+        if (resData.success !== false && !resData.error && resData.attestation && resData.signature) {
+          platformFees.push({
+            id: feeId,
+            amount: feeAmountFormatted,
+            destinationChain,
+            recipient: feeRecipient,
+            spec: feeSpec,
+            attestation: resData.attestation,
+            circleSignature: resData.signature,
+            status: "pending_claim",
+            txHash: null,
+            timestamp: new Date().toISOString(),
+          });
+          saveState();
+          console.log(`[CastPay Platform Fee] Recorded fee claim: ${feeAmountFormatted} USDC for platform wallet`);
+        }
+      }).catch(e => {
+        console.error("[CastPay Platform Fee] Settle failed:", e);
       });
-    } catch (error: any) {
-      if (error?.name === "AbortError") {
-        throw validationError("Circle Gateway transfer request timed out before an attestation was returned. Please retry the withdrawal.");
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
     }
+    
+    // Proxy the pre-signed BurnIntent request to Circle Gateway API
+    const response = await fetch(`${GATEWAY_API_TESTNET}/transfer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        [{ burnIntent, signature }],
+        (_, v) => typeof v === "bigint" ? v.toString() : v
+      )
+    });
 
     const result = await response.json();
     if (!response.ok || result.success === false || result.error || !result.attestation || !result.signature) {
@@ -1214,16 +547,6 @@ app.post("/api/withdraw", async (req, res) => {
         `Circle Gateway API error: ${result.message || result.error || JSON.stringify(result)}`
       );
     }
-
-    const readyIdx = withdrawals.findIndex(w => w.id === withdrawalId);
-    if (readyIdx !== -1) {
-      withdrawals[readyIdx].status = "ready_to_claim";
-      withdrawals[readyIdx].attestation = result.attestation;
-      withdrawals[readyIdx].circleSignature = result.signature;
-      withdrawals[readyIdx].gatewaySubmittedAt = new Date().toISOString();
-      saveState();
-    }
-    console.log(`[CastPay] Gateway withdrawal ${withdrawalId} is ready to claim on ${destinationChain}`);
 
     res.json({
       success: true,
@@ -1234,15 +557,14 @@ app.post("/api/withdraw", async (req, res) => {
       recipient,
       withdrawalId,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Withdrawal error:", error);
     const idx = withdrawals.findIndex(w => w.id === withdrawalId);
     if (idx !== -1) {
       withdrawals[idx].status = "failed";
       saveState();
     }
-    const statusCode = typeof error?.statusCode === "number" ? error.statusCode : 500;
-    res.status(statusCode).json({ error: "Withdrawal failed", details: error?.message || String(error) });
+    res.status(500).json({ error: "Withdrawal failed", details: String(error) });
   }
 });
 
@@ -1278,24 +600,6 @@ app.post("/api/withdraw/confirm", (req, res) => {
   if (idx !== -1) {
     withdrawals[idx].status = "confirmed";
     withdrawals[idx].txHash = txHash;
-    const platformFee = withdrawals[idx].platformFee;
-    if (platformFee && !platformFees.some((fee) => fee.withdrawalId === id)) {
-      platformFees.push({
-        id: `fee_${Date.now()}`,
-        amount: platformFee.amount,
-        destinationChain: withdrawals[idx].destinationChain,
-        recipient: platformFee.recipient,
-        spec: platformFee.spec,
-        attestation: null,
-        circleSignature: null,
-        status: "claimed",
-        txHash,
-        timestamp: new Date().toISOString(),
-        withdrawalId: id,
-      });
-      console.log(`[CastPay Platform Fee] Fee ${platformFee.amount} USDC claimed in withdrawal ${id}`);
-    }
-    statsCache.delete((withdrawals[idx].creatorAddress || "").toLowerCase());
     saveState();
     console.log(`[CastPay] Withdrawal ${id} confirmed with tx: ${txHash}`);
     return res.json({ success: true });

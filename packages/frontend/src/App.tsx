@@ -25,9 +25,8 @@ import {
 } from "lucide-react";
 import Hls from "hls.js";
 import { GatewayClient, CHAIN_CONFIGS, SupportedChainName, BatchEvmScheme } from "@circle-fin/x402-batching/client";
-import { W3SSdk } from "@circle-fin/w3s-pw-web-sdk";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
-import { createPublicClient, createWalletClient, custom, http, fallback, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256, parseAbiItem } from "viem";
+import { createPublicClient, createWalletClient, custom, http, fallback, formatUnits, parseUnits, erc20Abi, pad, zeroAddress, maxUint256 } from "viem";
 import { arcTestnet } from "viem/chains";
 import { useAccount, useChainId, useDisconnect, useSwitchChain } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -53,102 +52,10 @@ if (BatchEvmScheme && BatchEvmScheme.prototype) {
   (BatchEvmScheme.prototype as any).createPaymentPayload = patchPayload((BatchEvmScheme.prototype as any).createPaymentPayload);
 }
 
-const CASTPAY_ENV = typeof __CASTPAY_ENV__ !== "undefined" ? __CASTPAY_ENV__ : {};
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || CASTPAY_ENV.BACKEND_URL || "http://localhost:3001";
-const CIRCLE_APP_ID = import.meta.env.VITE_CIRCLE_APP_ID || CASTPAY_ENV.VITE_CIRCLE_APP_ID || "";
-const CIRCLE_ENVIRONMENT = import.meta.env.VITE_CIRCLE_ENVIRONMENT || CASTPAY_ENV.VITE_CIRCLE_ENVIRONMENT || "sandbox";
+const BACKEND_URL = (typeof process !== "undefined" && process.env && process.env.BACKEND_URL) || "http://localhost:3001";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
-const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
-const ARC_TESTNET_RPC = import.meta.env.VITE_RPC || CASTPAY_ENV.RPC || "https://rpc.testnet.arc.network";
+const ARC_TESTNET_RPC = (typeof process !== "undefined" && process.env && process.env.RPC) || "https://rpc.testnet.arc.network";
 const PLATFORM_WALLET = "0xDF04435F24bC101FCDc05Dc88D2911194De1F9FA";
-const CIRCLE_USER_ID_STORAGE_KEY = "castpay_circle_user_id";
-const CIRCLE_CREDENTIALS_STORAGE_KEY = "castpay_circle_credentials";
-const GATEWAY_WITHDRAW_MAX_FEE_USDC = 0.0035;
-const GATEWAY_WITHDRAW_INTENT_COUNT = 2;
-const CIRCLE_BLOCKCHAIN_BY_WITHDRAW_CHAIN: Record<string, string> = {
-  arcTestnet: "ARC-TESTNET",
-  baseSepolia: "BASE-SEPOLIA",
-  sepolia: "ETH-SEPOLIA",
-  arbitrumSepolia: "ARB-SEPOLIA",
-  optimismSepolia: "OP-SEPOLIA",
-  avalancheFuji: "AVAX-FUJI",
-  polygonAmoy: "MATIC-AMOY",
-};
-
-type ViewerWalletType = "metamask" | "circle";
-type CircleWalletRole = "viewer" | "creator";
-
-interface ActiveViewerWallet {
-  type: ViewerWalletType;
-  address: string;
-  circleUserId?: string;
-  circleWalletId?: string;
-}
-
-interface CircleCredentials {
-  userId: string;
-  userToken: string;
-  encryptionKey: string;
-}
-
-interface CircleWalletInfo {
-  id: string;
-  address: string;
-  blockchain?: string;
-  state?: string;
-  name?: string;
-}
-
-interface CircleWalletsResponse {
-  wallets: CircleWalletInfo[];
-}
-
-interface CircleChallengeResponse {
-  challengeId?: string;
-  alreadyInitialized?: boolean;
-}
-
-const formatCircleErrorDetails = (details: unknown) => {
-  if (!details) return "";
-  if (typeof details === "string") return details;
-  try {
-    return JSON.stringify(details);
-  } catch {
-    return "";
-  }
-};
-
-interface CircleTokenResponse {
-  userToken?: string;
-  encryptionKey?: string;
-}
-
-interface CircleBalanceResponse {
-  usdcBalance?: { amount?: string };
-}
-
-interface CircleTransactionsResponse {
-  transactions: Array<{
-    id: string;
-    state: string;
-    txHash?: string;
-    contractAddress?: string;
-    blockchain?: string;
-    createDate?: string;
-    updateDate?: string;
-    errorReason?: string;
-    errorDetails?: string;
-  }>;
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const generateCircleUserId = () => {
-  const randomId = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36);
-  return `castpay-${randomId}`;
-};
 
 const GATEWAY_MINTER_ABI = [
   {
@@ -176,8 +83,6 @@ const GATEWAY_WALLET_ABI = [
     outputs: []
   }
 ] as const;
-
-const USDC_TRANSFER_EVENT = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
 const padAddress = (addr: string) => {
   return pad(addr.toLowerCase() as `0x${string}`, { size: 32 });
@@ -317,56 +222,6 @@ export default function App() {
   const [isDepositing, setIsDepositing] = useState(false);
   const [isFunding, setIsFunding] = useState(false);
 
-  const [activeViewerWalletType, setActiveViewerWalletType] = useState<ViewerWalletType>("metamask");
-  const [activeCreatorWalletType, setActiveCreatorWalletType] = useState<ViewerWalletType>("metamask");
-  const [circleUserId, setCircleUserId] = useState(() => localStorage.getItem(CIRCLE_USER_ID_STORAGE_KEY) || "");
-  const [circleCredentials, setCircleCredentials] = useState<CircleCredentials | null>(() => {
-    try {
-      const stored = sessionStorage.getItem(CIRCLE_CREDENTIALS_STORAGE_KEY);
-      if (!stored) return null;
-      const parsed = JSON.parse(stored) as Partial<CircleCredentials>;
-      if (parsed.userId && parsed.userToken && parsed.encryptionKey) {
-        return parsed as CircleCredentials;
-      }
-    } catch (err) {
-      console.warn("Failed to restore Circle credentials:", err);
-    }
-    return null;
-  });
-  const [circleWallet, setCircleWallet] = useState<CircleWalletInfo | null>(null);
-  const [circleWalletBalance, setCircleWalletBalance] = useState("0.0000");
-  const [circleSdkReady, setCircleSdkReady] = useState(false);
-  const [circleSdkError, setCircleSdkError] = useState("");
-  const [circleStatus, setCircleStatus] = useState("");
-  const [isCircleBusy, setIsCircleBusy] = useState(false);
-
-  const activeViewerWallet: ActiveViewerWallet | null = activeViewerWalletType === "circle"
-    ? circleWallet
-      ? {
-          type: "circle",
-          address: circleWallet.address,
-          circleUserId: circleCredentials?.userId || circleUserId,
-          circleWalletId: circleWallet.id,
-        }
-      : null
-    : connectedAddress
-      ? { type: "metamask", address: connectedAddress }
-      : null;
-
-  const activeCreatorWallet: ActiveViewerWallet | null = activeCreatorWalletType === "circle"
-    ? circleWallet
-      ? {
-          type: "circle",
-          address: circleWallet.address,
-          circleUserId: circleCredentials?.userId || circleUserId,
-          circleWalletId: circleWallet.id,
-        }
-      : null
-    : connectedAddress
-      ? { type: "metamask", address: connectedAddress }
-      : null;
-  const activeCreatorAddress = activeCreatorWallet?.address || "";
-
   const [creatorStats, setCreatorStats] = useState({
     activeViewers: 0,
     totalReceived: "0.000000",
@@ -431,8 +286,6 @@ export default function App() {
   const heartbeatIntervalRef = useRef<any>(null);
   const gatewayClientRef = useRef<GatewayClient | null>(null);
   const publicClientRef = useRef<any>(null);
-  const circleSdkRef = useRef<W3SSdk | null>(null);
-  const circleSdkInitPromiseRef = useRef<Promise<W3SSdk> | null>(null);
 
   const getPublicClient = () => {
     if (!publicClientRef.current) {
@@ -459,342 +312,6 @@ export default function App() {
       gatewayClientRef.current = client;
     }
     return gatewayClientRef.current;
-  };
-
-  const callCircleApi = async <T,>(path: string, body: Record<string, unknown>): Promise<T> => {
-    const res = await fetch(`${BACKEND_URL}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const message = data.message || data.error || `Circle request failed with status ${res.status}`;
-      const code = data.code ? ` (${data.code})` : "";
-      const details = formatCircleErrorDetails(data.details);
-      throw new Error(details ? `${message}${code}: ${details}` : `${message}${code}`);
-    }
-    return data as T;
-  };
-
-  const ensureCircleSdk = async () => {
-    if (!CIRCLE_APP_ID) {
-      throw new Error("Circle Wallet App ID is missing. Set VITE_CIRCLE_APP_ID in the frontend environment.");
-    }
-    if (circleSdkReady && circleSdkRef.current) {
-      return circleSdkRef.current;
-    }
-    if (circleSdkInitPromiseRef.current) {
-      return circleSdkInitPromiseRef.current;
-    }
-
-    setCircleSdkReady(false);
-    setCircleSdkError("");
-    setCircleStatus("Initializing Circle Wallet SDK...");
-
-    const initPromise = (async () => {
-      try {
-        const sdk = circleSdkRef.current || new W3SSdk({ appSettings: { appId: CIRCLE_APP_ID } });
-        circleSdkRef.current = sdk;
-        await sdk.getDeviceId();
-        setCircleSdkReady(true);
-        setCircleSdkError("");
-        setCircleStatus(`Circle Wallet SDK ready (${CIRCLE_ENVIRONMENT}).`);
-        return sdk;
-      } catch (err: any) {
-        const reason = err?.message || err?.toString?.() || "Unknown Circle SDK error";
-        setCircleSdkReady(false);
-        setCircleSdkError(reason);
-        setCircleStatus(`Circle Wallet SDK failed to initialize: ${reason}`);
-        throw new Error(`Circle Wallet SDK failed to initialize: ${reason}. Confirm Circle Console allowed origins include ${window.location.origin}.`);
-      } finally {
-        circleSdkInitPromiseRef.current = null;
-      }
-    })();
-
-    circleSdkInitPromiseRef.current = initPromise;
-    return initPromise;
-  };
-
-  const persistCircleCredentials = (credentials: CircleCredentials) => {
-    setCircleCredentials(credentials);
-    sessionStorage.setItem(CIRCLE_CREDENTIALS_STORAGE_KEY, JSON.stringify(credentials));
-  };
-
-  const refreshCircleCredentials = async (status = "Refreshing Circle Wallet session...") => {
-    const userId = circleCredentials?.userId || circleUserId || localStorage.getItem(CIRCLE_USER_ID_STORAGE_KEY);
-    if (!userId) {
-      throw new Error("Circle Wallet session expired. Click Continue with Circle Wallet and try again.");
-    }
-    setCircleStatus(status);
-    const tokenData = await callCircleApi<CircleTokenResponse>("/api/circle/token", { userId });
-    if (!tokenData.userToken || !tokenData.encryptionKey) {
-      throw new Error("Circle did not return refreshed wallet credentials.");
-    }
-    const refreshed = { userId, userToken: tokenData.userToken, encryptionKey: tokenData.encryptionKey };
-    persistCircleCredentials(refreshed);
-    return refreshed;
-  };
-
-  const fetchCircleWalletBalance = async (credentials: CircleCredentials, wallet: CircleWalletInfo) => {
-    const data = await callCircleApi<CircleBalanceResponse>("/api/circle/wallets/balances", {
-      userToken: credentials.userToken,
-      walletId: wallet.id,
-    });
-    const amount = data.usdcBalance?.amount || "0";
-    setCircleWalletBalance(Number.parseFloat(amount).toFixed(4));
-  };
-
-  const loadCircleWallets = async (
-    credentials: CircleCredentials,
-    showStatus = true,
-    blockchain = "ARC-TESTNET"
-  ): Promise<CircleWalletInfo | null> => {
-    if (showStatus) setCircleStatus(`Loading Circle wallet on ${blockchain}...`);
-    const data = await callCircleApi<CircleWalletsResponse>("/api/circle/wallets", {
-      userToken: credentials.userToken,
-      blockchain,
-    });
-    const wallet = data.wallets.find((item) => item.blockchain === blockchain && item.address) || null;
-    if (wallet) {
-      if (blockchain === "ARC-TESTNET") {
-        setCircleWallet(wallet);
-        await fetchCircleWalletBalance(credentials, wallet);
-      }
-      if (showStatus) setCircleStatus(`Circle Wallet ready on ${blockchain}.`);
-    } else if (showStatus) {
-      setCircleStatus(`No ${blockchain} Circle wallet found yet.`);
-    }
-    return wallet;
-  };
-
-  const executeCircleChallenge = async (challengeId: string, credentials: CircleCredentials) => {
-    const sdk = await ensureCircleSdk();
-
-    sdk.setAuthentication({
-      userToken: credentials.userToken,
-      encryptionKey: credentials.encryptionKey,
-    });
-
-    return await new Promise<any>((resolve, reject) => {
-      sdk.execute(challengeId, (error, result) => {
-        if (error) {
-          const err = error as any;
-          reject(new Error(`${err.code ? `${err.code}: ` : ""}${err.message || "Circle challenge failed"}`));
-          return;
-        }
-        resolve(result);
-      });
-    });
-  };
-
-  const waitForCircleAllowance = async (owner: string, amount: bigint) => {
-    const publicClient = getPublicClient();
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (attempt > 0) await sleep(3000);
-      const allowance = await publicClient.readContract({
-        address: ARC_TESTNET_USDC,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [owner as `0x${string}`, ARC_TESTNET_GATEWAY_WALLET],
-      });
-      if (allowance >= amount) return;
-    }
-    throw new Error("Circle approval was authorized but is not visible on Arc Testnet yet. Please try the deposit again in a moment.");
-  };
-
-  const waitForGatewayBalance = async (targetBalance: number) => {
-    const gateway = getGatewayClient();
-    if (!gateway) return;
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (attempt > 0) await sleep(3000);
-      const balances = await gateway.getBalances();
-      const available = Number.parseFloat(balances.gateway.formattedAvailable);
-      setViewerGatewayBalance(available.toFixed(4));
-      if (available + 0.000001 >= targetBalance) return;
-    }
-    throw new Error("Circle deposit was authorized, but the Gateway balance has not updated yet. Refresh balances in a moment.");
-  };
-
-  const tryEstimateCircleContract = async (body: Record<string, unknown>, label: string) => {
-    try {
-      await callCircleApi("/api/circle/transactions/estimate-contract", body);
-    } catch (err) {
-      console.warn(`Circle ${label} fee estimate failed; continuing with challenge creation.`, err);
-      setCircleStatus(`${label} fee estimate unavailable. Requesting Circle approval...`);
-    }
-  };
-
-  const createCircleContractChallenge = async (
-    credentials: CircleCredentials,
-    action: "approve" | "depositFor",
-    amountAtomic: string
-  ) => {
-    if (!circleWallet) throw new Error("Circle Wallet is not ready.");
-    const body = {
-      userToken: credentials.userToken,
-      walletId: circleWallet.id,
-      action,
-      amountAtomic,
-      sessionAddress: viewerAddress,
-    };
-    await tryEstimateCircleContract(body, action === "approve" ? "approval" : "Gateway deposit");
-    const data = await callCircleApi<CircleChallengeResponse>("/api/circle/transactions/contract", body);
-    if (!data.challengeId) {
-      throw new Error(`Circle did not return a ${action} challenge.`);
-    }
-    return data.challengeId;
-  };
-
-  const pollCircleWalletForBlockchain = async (credentials: CircleCredentials, blockchain: string) => {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      if (attempt > 0) await sleep(1500);
-      const wallet = await loadCircleWallets(credentials, false, blockchain);
-      if (wallet) return wallet;
-    }
-    return null;
-  };
-
-  const ensureCircleWalletForBlockchain = async (
-    credentials: CircleCredentials,
-    blockchain: string,
-    label = blockchain
-  ): Promise<CircleWalletInfo> => {
-    const existingWallet = await loadCircleWallets(credentials, false, blockchain);
-    if (existingWallet) return existingWallet;
-
-    setCircleStatus(`Creating Circle Wallet on ${label}...`);
-    const createData = await callCircleApi<CircleChallengeResponse>("/api/circle/wallets/create", {
-      userToken: credentials.userToken,
-      blockchain,
-    });
-    if (!createData.challengeId) {
-      throw new Error(`Circle did not return a wallet creation challenge for ${label}.`);
-    }
-    await executeCircleChallenge(createData.challengeId, credentials);
-
-    setCircleStatus(`Waiting for ${label} Circle Wallet...`);
-    const wallet = await pollCircleWalletForBlockchain(credentials, blockchain);
-    if (!wallet) {
-      throw new Error(`${label} Circle Wallet was approved but is not available yet. Try again in a moment.`);
-    }
-    return wallet;
-  };
-
-  const signCircleGatewayBurnIntent = async (
-    credentials: CircleCredentials,
-    wallet: CircleWalletInfo,
-    destinationChain: string,
-    typedData: unknown,
-    label: string
-  ) => {
-    const data = await callCircleApi<CircleChallengeResponse>("/api/circle/signatures/typed-data", {
-      userToken: credentials.userToken,
-      walletId: wallet.id,
-      action: "gatewayBurnIntent",
-      destinationChain,
-      typedData: JSON.stringify(typedData, (_, value) => typeof value === "bigint" ? value.toString() : value),
-    });
-    if (!data.challengeId) {
-      throw new Error(`Circle did not return a ${label} signing challenge.`);
-    }
-    setCircleStatus(`Approve ${label} in Circle Wallet...`);
-    const result = await executeCircleChallenge(data.challengeId, credentials);
-    const signature = result?.data?.signature;
-    if (!signature) {
-      throw new Error(`Circle did not return a ${label} signature.`);
-    }
-    return signature as string;
-  };
-
-  const createCircleGatewayMintChallenge = async (
-    credentials: CircleCredentials,
-    wallet: CircleWalletInfo,
-    destinationChain: string,
-    attestation: string,
-    circleSignature: string
-  ) => {
-    const body = {
-      userToken: credentials.userToken,
-      walletId: wallet.id,
-      action: "gatewayMint",
-      destinationChain,
-      attestation,
-      circleSignature,
-    };
-    await tryEstimateCircleContract(body, "Gateway claim");
-    const data = await callCircleApi<CircleChallengeResponse>("/api/circle/transactions/contract", body);
-    if (!data.challengeId) {
-      throw new Error("Circle did not return a Gateway claim challenge.");
-    }
-    return data.challengeId;
-  };
-
-  const waitForCircleTransactionHash = async (
-    credentials: CircleCredentials,
-    wallet: CircleWalletInfo,
-    blockchain: string,
-    contractAddress?: string,
-    startedAtMs?: number
-  ) => {
-    let latestHash = "";
-    for (let attempt = 0; attempt < 25; attempt += 1) {
-      if (attempt > 0) await sleep(3000);
-      const data = await callCircleApi<CircleTransactionsResponse>("/api/circle/transactions/list", {
-        userToken: credentials.userToken,
-        walletId: wallet.id,
-        blockchain,
-      });
-      const match = data.transactions.find((tx) => {
-        const txTime = Date.parse(tx.updateDate || tx.createDate || "");
-        const recentEnough = !startedAtMs || Number.isNaN(txTime) || txTime >= startedAtMs - 120_000;
-        const contractMatches = !contractAddress || !tx.contractAddress || tx.contractAddress.toLowerCase() === contractAddress.toLowerCase();
-        return recentEnough && contractMatches && tx.txHash;
-      });
-      if (!match) continue;
-      latestHash = match.txHash || latestHash;
-      if (["COMPLETE", "CONFIRMED"].includes(match.state)) return latestHash;
-      if (["FAILED", "DENIED", "CANCELLED"].includes(match.state)) {
-        throw new Error(match.errorReason || match.errorDetails || `Circle transaction ${match.state.toLowerCase()}.`);
-      }
-    }
-    if (latestHash) return latestHash;
-    throw new Error("Circle transaction was approved, but no transaction hash is visible yet. Checking the chain directly...");
-  };
-
-  const findRecentGatewayMintTx = async (
-    toConfig: any,
-    recipient: string,
-    amountAtomic: bigint,
-    startedAtMs: number
-  ) => {
-    const rpcUrl = toConfig.rpcUrl || toConfig.chain.rpcUrls.default.http[0];
-    const client = createPublicClient({
-      chain: toConfig.chain,
-      transport: http(rpcUrl),
-    });
-    const latest = await client.getBlockNumber();
-    const fromBlock = latest > 9_500n ? latest - 9_500n : 0n;
-    const logs = await client.getLogs({
-      address: toConfig.usdc,
-      event: USDC_TRANSFER_EVENT,
-      args: {
-        from: zeroAddress,
-        to: recipient as `0x${string}`,
-      },
-      fromBlock,
-      toBlock: latest,
-    });
-
-    for (const log of logs.slice().reverse()) {
-      if (log.args.value !== amountAtomic) continue;
-      const block = await client.getBlock({ blockNumber: log.blockNumber });
-      const blockTimeMs = Number(block.timestamp) * 1000;
-      if (blockTimeMs >= startedAtMs - 120_000) {
-        return log.transactionHash;
-      }
-    }
-    return "";
   };
 
   const [particles, setParticles] = useState<Array<{ id: number; text: string; x: number; y: number }>>([]);
@@ -875,38 +392,6 @@ export default function App() {
     }
   }, [backendStatus]);
 
-  useEffect(() => {
-    if (!CIRCLE_APP_ID) {
-      setCircleStatus("Set VITE_CIRCLE_APP_ID to enable Circle Wallet.");
-      return;
-    }
-
-    let cancelled = false;
-    const initializeCircleSdk = async () => {
-      try {
-        await ensureCircleSdk();
-      } catch (err: any) {
-        if (!cancelled) {
-          setCircleSdkReady(false);
-          setCircleSdkError(err.message || err.toString());
-        }
-      }
-    };
-
-    void initializeCircleSdk();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (circleCredentials && !circleWallet) {
-      loadCircleWallets(circleCredentials).catch((err) => {
-        console.warn("Failed to restore Circle wallet:", err);
-      });
-    }
-  }, [circleCredentials?.userToken]);
-
   const addJellyfinLog = (msg: string, type: "info" | "success" | "warn" = "info") => {
     const time = new Date().toLocaleTimeString();
     setJellyfinLogs(prev => [...prev, { time, msg, type }].slice(-20));
@@ -915,82 +400,6 @@ export default function App() {
   const addPeerTubeLog = (msg: string, type: "info" | "success" | "warn" = "info") => {
     const time = new Date().toLocaleTimeString();
     setPeertubeLogs(prev => [...prev, { time, msg, type }].slice(-20));
-  };
-
-  const pollCircleWallet = async (credentials: CircleCredentials) => {
-    return pollCircleWalletForBlockchain(credentials, "ARC-TESTNET");
-  };
-
-  const handleContinueCircleWallet = async (role: CircleWalletRole = "viewer") => {
-    if (role === "creator") {
-      setActiveCreatorWalletType("circle");
-    } else {
-      setActiveViewerWalletType("circle");
-    }
-    if (isCircleBusy) return;
-    if (!CIRCLE_APP_ID) {
-      setErrorMsg("Circle Wallet App ID is missing. Set VITE_CIRCLE_APP_ID in the frontend environment.");
-      return;
-    }
-
-    setIsCircleBusy(true);
-    setErrorMsg("");
-    setSuccessMsg("");
-    try {
-      await ensureCircleSdk();
-      const userId = circleUserId || generateCircleUserId();
-      setCircleUserId(userId);
-      localStorage.setItem(CIRCLE_USER_ID_STORAGE_KEY, userId);
-
-      setCircleStatus("Creating or restoring Circle user...");
-      await callCircleApi("/api/circle/users", { userId });
-
-      setCircleStatus("Creating Circle session token...");
-      const tokenData = await callCircleApi<CircleTokenResponse>("/api/circle/token", { userId });
-      if (!tokenData.userToken || !tokenData.encryptionKey) {
-        throw new Error("Circle did not return userToken and encryptionKey.");
-      }
-      const credentials = { userId, userToken: tokenData.userToken, encryptionKey: tokenData.encryptionKey };
-      persistCircleCredentials(credentials);
-
-      const existingWallet = await loadCircleWallets(credentials);
-      if (existingWallet) {
-        setSuccessMsg("Circle Wallet connected.");
-        return;
-      }
-
-      setCircleStatus("Opening Circle PIN setup...");
-      const initData = await callCircleApi<CircleChallengeResponse>("/api/circle/initialize", {
-        userToken: credentials.userToken,
-      });
-
-      if (initData.challengeId) {
-        await executeCircleChallenge(initData.challengeId, credentials);
-      } else if (initData.alreadyInitialized) {
-        const createData = await callCircleApi<CircleChallengeResponse>("/api/circle/wallets/create", {
-          userToken: credentials.userToken,
-        });
-        if (!createData.challengeId) {
-          throw new Error("Circle did not return a wallet creation challenge.");
-        }
-        await executeCircleChallenge(createData.challengeId, credentials);
-      } else {
-        throw new Error("Circle did not return a wallet setup challenge.");
-      }
-
-      setCircleStatus("Waiting for Circle wallet creation...");
-      const wallet = await pollCircleWallet(credentials);
-      if (!wallet) {
-        throw new Error("Circle wallet was approved but was not returned yet. Try Continue again in a moment.");
-      }
-      setSuccessMsg("Circle Wallet created and connected.");
-    } catch (err: any) {
-      console.error("Circle Wallet setup failed:", err);
-      setErrorMsg(`Circle Wallet setup failed: ${err.message || err.toString()}`);
-      setCircleStatus("Circle Wallet setup failed.");
-    } finally {
-      setIsCircleBusy(false);
-    }
   };
 
   const triggerJellyfinWebhook = async (
@@ -1170,7 +579,7 @@ export default function App() {
     fetchBackendStats();
     const interval = setInterval(fetchBackendStats, 3000);
     return () => clearInterval(interval);
-  }, [activeTab, activeCreatorAddress, selectedCreator?.creatorAddress]);
+  }, [activeTab, connectedAddress, selectedCreator?.creatorAddress]);
 
   // Fetch active streams list periodically
   useEffect(() => {
@@ -1228,21 +637,17 @@ export default function App() {
     }
   }, []);
 
-  // Check if selected creator wallet is already live on backend
+  // Check if connected creator is already live on backend
   useEffect(() => {
-    if (activeCreatorAddress && streamsList.length > 0) {
-      const active = streamsList.find(s => s.creatorAddress.toLowerCase() === activeCreatorAddress.toLowerCase());
+    if (connectedAddress && streamsList.length > 0) {
+      const active = streamsList.find(s => s.creatorAddress.toLowerCase() === connectedAddress.toLowerCase());
       if (active) {
         setIsStreamActive(true);
         setCreatorNameInput(active.creatorName);
         setNewRate(active.ratePerSecond.toString());
-      } else {
-        setIsStreamActive(false);
       }
-    } else {
-      setIsStreamActive(false);
     }
-  }, [activeCreatorAddress, streamsList]);
+  }, [connectedAddress, streamsList]);
 
   // Wallet auto-connection is now handled automatically by RainbowKit/Wagmi
 
@@ -1390,7 +795,7 @@ export default function App() {
   };
 
   const fetchBackendStats = async () => {
-    const hasTargetCreator = (activeTab === "creator" && activeCreatorAddress) ||
+    const hasTargetCreator = (activeTab === "creator" && connectedAddress) || 
                              (activeTab === "viewer" && selectedCreator);
 
     if (!hasTargetCreator) {
@@ -1410,8 +815,8 @@ export default function App() {
 
     try {
       let url = `${BACKEND_URL}/api/stats`;
-      if (activeTab === "creator" && activeCreatorAddress) {
-        url += `?creator=${activeCreatorAddress}`;
+      if (activeTab === "creator" && connectedAddress) {
+        url += `?creator=${connectedAddress}`;
       } else if (activeTab === "viewer" && selectedCreator) {
         url += `?creator=${selectedCreator.creatorAddress}`;
       }
@@ -1542,87 +947,9 @@ export default function App() {
     }, 1500);
   };
 
-  const handleCircleDeposit = async () => {
-    if (!circleCredentials || !circleWallet) {
-      setErrorMsg("Connect or create a Circle Wallet first.");
-      return;
-    }
-    if (!viewerAddress) {
-      setErrorMsg("Session wallet is still generating. Please try again in a moment.");
-      return;
-    }
-    if (isDepositing || !depositAmount) return;
-
-    setErrorMsg("");
-    setSuccessMsg("");
-    setIsDepositing(true);
-    try {
-      const amountVal = parseUnits(depositAmount, 6);
-      const amountAtomic = amountVal.toString();
-      const depositFloat = Number.parseFloat(formatUnits(amountVal, 6));
-      const publicClient = getPublicClient();
-
-      setCircleStatus("Checking Circle Wallet USDC balance...");
-      const balance = await publicClient.readContract({
-        address: ARC_TESTNET_USDC,
-        abi: erc20Abi,
-        functionName: "balanceOf",
-        args: [circleWallet.address as `0x${string}`],
-      });
-
-      if (balance < amountVal) {
-        throw new Error(`Insufficient Circle Wallet USDC balance. Have: ${formatUnits(balance, 6)} USDC, Need: ${depositAmount} USDC`);
-      }
-
-      const allowance = await publicClient.readContract({
-        address: ARC_TESTNET_USDC,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [circleWallet.address as `0x${string}`, ARC_TESTNET_GATEWAY_WALLET],
-      });
-
-      if (allowance < amountVal) {
-        setCircleStatus("Preparing Circle approval request...");
-        const approveChallengeId = await createCircleContractChallenge(circleCredentials, "approve", amountAtomic);
-        setCircleStatus("Approve USDC spending in Circle Wallet...");
-        await executeCircleChallenge(approveChallengeId, circleCredentials);
-        setCircleStatus("Waiting for approval on Arc Testnet...");
-        await waitForCircleAllowance(circleWallet.address, amountVal);
-      }
-
-      const previousGatewayBalance = Number.parseFloat(viewerGatewayBalance || "0");
-      setCircleStatus("Preparing Circle Gateway deposit request...");
-      const depositChallengeId = await createCircleContractChallenge(circleCredentials, "depositFor", amountAtomic);
-      setCircleStatus("Confirm Gateway deposit in Circle Wallet...");
-      await executeCircleChallenge(depositChallengeId, circleCredentials);
-
-      setCircleStatus("Waiting for Gateway balance update...");
-      try {
-        await waitForGatewayBalance(previousGatewayBalance + depositFloat);
-        setSuccessMsg(`Circle Wallet deposit successful: ${depositAmount} USDC`);
-      } catch (waitError: any) {
-        setSuccessMsg(waitError.message || "Circle Wallet deposit authorized. Refresh balances in a moment.");
-      }
-
-      await fetchCircleWalletBalance(circleCredentials, circleWallet);
-      fetchViewerBalances();
-      setCircleStatus("Circle Wallet deposit flow complete.");
-    } catch (err: any) {
-      console.error("Circle deposit failed:", err);
-      setErrorMsg(`Circle deposit failed: ${err.message || err.toString()}`);
-      setCircleStatus("Circle Wallet deposit failed.");
-    } finally {
-      setIsDepositing(false);
-    }
-  };
-
   const handleDeposit = async () => {
-    if (activeViewerWalletType === "circle") {
-      await handleCircleDeposit();
-      return;
-    }
     if (!connectedAddress) {
-      setErrorMsg("Please connect your MetaMask wallet first, or switch the funding source to Circle Wallet.");
+      setErrorMsg("Please connect your MetaMask wallet first.");
       return;
     }
     if (connectedChainId !== 5042002) {
@@ -1662,7 +989,7 @@ export default function App() {
       }
 
       // Check Allowance
-      const gatewayWalletAddress = ARC_TESTNET_GATEWAY_WALLET;
+      const gatewayWalletAddress = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
       const allowance = await publicClient.readContract({
         address: ARC_TESTNET_USDC,
         abi: erc20Abi,
@@ -1703,54 +1030,38 @@ export default function App() {
 
 
   const handleWithdraw = async () => {
-    if (!activeCreatorAddress) {
-      setErrorMsg(activeCreatorWalletType === "circle" ? "Create or connect your Circle Wallet first." : "Please connect your MetaMask wallet first.");
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
       return;
     }
     if (creatorStats.sellerAddress === "0x0000000000000000000000000000000000000000" || !creatorStats.sellerAddress) {
       setErrorMsg("Creator address is not registered. Please register first.");
       return;
     }
-    if (activeCreatorAddress.toLowerCase() !== creatorStats.sellerAddress.toLowerCase()) {
-      setErrorMsg(`Selected creator wallet (${activeCreatorAddress.slice(0, 8)}...) does not match registered creator wallet (${creatorStats.sellerAddress.slice(0, 8)}...).`);
-      return;
-    }
-    if (activeCreatorWalletType === "circle" && (!circleCredentials || !circleWallet)) {
-      setErrorMsg("Create or connect your Circle Wallet first.");
+    if (connectedAddress.toLowerCase() !== creatorStats.sellerAddress.toLowerCase()) {
+      setErrorMsg(`Connected wallet (${connectedAddress.slice(0, 8)}...) does not match registered creator wallet (${creatorStats.sellerAddress.slice(0, 8)}...). Please switch accounts in MetaMask.`);
       return;
     }
     if (isWithdrawing) return;
-
     setErrorMsg("");
     setSuccessMsg("");
     setIsWithdrawing(true);
     try {
-      if (activeCreatorWalletType === "metamask" && connectedChainId !== 5042002) {
+      // 1. Ensure we are on Arc Testnet to initiate the burn intent signature
+      if (connectedChainId !== 5042002) {
         setSuccessMsg("Switching to Arc Testnet to sign withdrawal...");
         await ensureArcNetwork();
+        // Wait briefly for MetaMask state update
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
-      let creatorCircleCredentials = circleCredentials;
-      if (activeCreatorWalletType === "circle") {
-        if (!creatorCircleCredentials || !circleWallet) {
-          throw new Error("Circle Wallet is not ready.");
-        }
-        creatorCircleCredentials = await refreshCircleCredentials("Refreshing Circle session for withdrawal...");
-      }
-
+      // Calculate Platform Fee (1.5%) and Net withdrawal amount
       const withdrawAmountAtomic = parseUnits(withdrawAmount, 6);
-      if (withdrawAmountAtomic <= 0n) {
-        throw new Error("Withdrawal amount must be greater than 0 USDC.");
-      }
       const feeAmountAtomic = (withdrawAmountAtomic * 15n) / 1015n; // 1.5% fee split from gross (1.015)
       const netAmountAtomic = withdrawAmountAtomic - feeAmountAtomic;
-      const maxFeeVal = parseUnits(GATEWAY_WITHDRAW_MAX_FEE_USDC.toString(), 6);
-      const requiredGatewayAtomic = withdrawAmountAtomic + maxFeeVal * (feeAmountAtomic > 0n ? 2n : 1n);
-      const availableGatewayAtomic = parseUnits(creatorStats.gateway.available || "0", 6);
-      if (availableGatewayAtomic < requiredGatewayAtomic) {
-        throw new Error(`Insufficient Gateway available balance. Available ${formatUnits(availableGatewayAtomic, 6)} USDC, required ${formatUnits(requiredGatewayAtomic, 6)} USDC including Gateway max fees. Try a smaller amount or refresh after more settlements complete.`);
-      }
+
+      const recipient = withdrawAddress || creatorStats.sellerAddress;
+      const maxFeeVal = parseUnits("0.0035", 6); // default max fee 0.0035 USDC
 
       const fromConfig = CHAIN_CONFIGS.arcTestnet;
       const toConfig = CHAIN_CONFIGS[withdrawChain as SupportedChainName];
@@ -1758,24 +1069,8 @@ export default function App() {
         throw new Error(`Unsupported destination chain: ${withdrawChain}`);
       }
 
-      let circleDestinationWallet: CircleWalletInfo | null = null;
-      const circleDestinationBlockchain = CIRCLE_BLOCKCHAIN_BY_WITHDRAW_CHAIN[withdrawChain];
-      if (activeCreatorWalletType === "circle") {
-        if (!creatorCircleCredentials || !circleWallet) {
-          throw new Error("Circle Wallet is not ready.");
-        }
-        if (!circleDestinationBlockchain) {
-          throw new Error(`${toConfig.chain.name} is not supported by the Circle Wallet creator withdrawal flow yet.`);
-        }
-        circleDestinationWallet = await ensureCircleWalletForBlockchain(
-          creatorCircleCredentials as CircleCredentials,
-          circleDestinationBlockchain,
-          toConfig.chain.name
-        );
-      }
-
-      const recipient = withdrawAddress || circleDestinationWallet?.address || creatorStats.sellerAddress;
-
+      // 2. Construct the BurnIntent payloads
+      // A. Net BurnIntent to the creator
       const burnIntent = createBurnIntent(
         fromConfig,
         toConfig,
@@ -1785,6 +1080,7 @@ export default function App() {
         maxFeeVal
       );
 
+      // B. Fee BurnIntent to the platform (if fee > 0)
       let feeBurnIntent = null;
       if (feeAmountAtomic > 0n) {
         feeBurnIntent = createBurnIntent(
@@ -1796,6 +1092,13 @@ export default function App() {
           maxFeeVal
         );
       }
+
+      const provider = await getEthereumProvider();
+      const walletClient = createWalletClient({
+        account: connectedAddress as `0x${string}`,
+        chain: arcTestnet,
+        transport: custom(provider)
+      });
 
       const typesConfig = {
         EIP712Domain: [
@@ -1825,66 +1128,30 @@ export default function App() {
         ]
       } as const;
 
-      const buildGatewayTypedData = (message: any) => ({
+      // 3. Prompt user to sign Net EIP-712 BurnIntent typed data via MetaMask
+      setSuccessMsg(`Please sign Net withdrawal authorization (${(parseFloat(formatUnits(netAmountAtomic, 6))).toFixed(4)} USDC) in MetaMask...`);
+      const signature = await walletClient.signTypedData({
         domain: { name: "GatewayWallet", version: "1" },
         types: typesConfig,
-        primaryType: "BurnIntent" as const,
-        message,
+        primaryType: "BurnIntent",
+        message: burnIntent
       });
 
-      let signature: string;
-      let feeSignature: string | null = null;
-
-      if (activeCreatorWalletType === "circle") {
-        const credentials = creatorCircleCredentials as CircleCredentials;
-        const sourceWallet = circleWallet as CircleWalletInfo;
-        setCircleStatus(`Approve net withdrawal (${parseFloat(formatUnits(netAmountAtomic, 6)).toFixed(4)} USDC) in Circle Wallet...`);
-        signature = await signCircleGatewayBurnIntent(
-          credentials,
-          sourceWallet,
-          withdrawChain,
-          buildGatewayTypedData(burnIntent),
-          "net withdrawal"
-        );
-
-        if (feeBurnIntent) {
-          setCircleStatus(`Approve platform fee (${parseFloat(formatUnits(feeAmountAtomic, 6)).toFixed(4)} USDC) in Circle Wallet...`);
-          feeSignature = await signCircleGatewayBurnIntent(
-            credentials,
-            sourceWallet,
-            withdrawChain,
-            buildGatewayTypedData(feeBurnIntent),
-            "platform fee withdrawal"
-          );
-        }
-      } else {
-        const provider = await getEthereumProvider();
-        const walletClient = createWalletClient({
-          account: connectedAddress as `0x${string}`,
-          chain: arcTestnet,
-          transport: custom(provider)
-        });
-
-        setSuccessMsg(`Please sign Net withdrawal authorization (${parseFloat(formatUnits(netAmountAtomic, 6)).toFixed(4)} USDC) in MetaMask...`);
-        signature = await walletClient.signTypedData({
+      // 4. Prompt user to sign Platform Fee EIP-712 BurnIntent typed data if applicable
+      let feeSignature = null;
+      if (feeBurnIntent) {
+        setSuccessMsg(`Please sign Platform Fee authorization (${(parseFloat(formatUnits(feeAmountAtomic, 6))).toFixed(4)} USDC) in MetaMask...`);
+        // Wait briefly between signatures for user friendliness
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        feeSignature = await walletClient.signTypedData({
           domain: { name: "GatewayWallet", version: "1" },
           types: typesConfig,
           primaryType: "BurnIntent",
-          message: burnIntent
+          message: feeBurnIntent
         });
-
-        if (feeBurnIntent) {
-          setSuccessMsg(`Please sign Platform Fee authorization (${parseFloat(formatUnits(feeAmountAtomic, 6)).toFixed(4)} USDC) in MetaMask...`);
-          await new Promise((resolve) => setTimeout(resolve, 800));
-          feeSignature = await walletClient.signTypedData({
-            domain: { name: "GatewayWallet", version: "1" },
-            types: typesConfig,
-            primaryType: "BurnIntent",
-            message: feeBurnIntent
-          });
-        }
       }
 
+      // 5. POST both signatures to the backend sidecar
       setSuccessMsg("Submitting withdrawal signatures to CastPay server...");
       const res = await fetch(`${BACKEND_URL}/api/withdraw`, {
         method: "POST",
@@ -1899,79 +1166,52 @@ export default function App() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.details || data.message || data.error || "Withdrawal failed at gateway proxy");
+        const data = await res.json();
+        throw new Error(data.error || data.details || "Withdrawal failed at gateway proxy");
       }
 
       const withdrawData = await res.json();
       const { attestation, circleSignature, withdrawalId } = withdrawData;
 
-      let mintTx = "";
-      if (activeCreatorWalletType === "circle") {
-        if (!creatorCircleCredentials || !circleDestinationWallet || !circleDestinationBlockchain) {
-          throw new Error("Circle destination wallet is not ready for claiming.");
-        }
-        setCircleStatus(`Approve Gateway claim on ${toConfig.chain.name} in Circle Wallet...`);
-        const claimChallengeId = await createCircleGatewayMintChallenge(
-          creatorCircleCredentials,
-          circleDestinationWallet,
-          withdrawChain,
-          attestation,
-          circleSignature
+      // 5. If destination chain is different, switch MetaMask to destination chain
+      const destChainId = toConfig.chain.id;
+      if (connectedChainId !== destChainId) {
+        setSuccessMsg(`Switching network to ${toConfig.chain.name} for claiming...`);
+        await switchNetwork(
+          destChainId,
+          toConfig.chain.name,
+          toConfig.rpcUrl || toConfig.chain.rpcUrls.default.http[0],
+          toConfig.chain.nativeCurrency || { name: "USDC", symbol: "USDC", decimals: 18 },
+          toConfig.chain.blockExplorers?.default?.url || ""
         );
-        const claimStartedAtMs = Date.now();
-        await executeCircleChallenge(claimChallengeId, creatorCircleCredentials);
-        setCircleStatus("Waiting for Circle claim transaction hash...");
-        try {
-          mintTx = await waitForCircleTransactionHash(
-            creatorCircleCredentials,
-            circleDestinationWallet,
-            circleDestinationBlockchain,
-            toConfig.gatewayMinter,
-            claimStartedAtMs
-          );
-        } catch (circleTxError) {
-          setCircleStatus("Circle transaction list is not showing the claim yet. Checking onchain logs...");
-          mintTx = await findRecentGatewayMintTx(toConfig, recipient, netAmountAtomic, claimStartedAtMs);
-          if (!mintTx) throw circleTxError;
-        }
-      } else {
-        const destChainId = toConfig.chain.id;
-        if (connectedChainId !== destChainId) {
-          setSuccessMsg(`Switching network to ${toConfig.chain.name} for claiming...`);
-          await switchNetwork(
-            destChainId,
-            toConfig.chain.name,
-            toConfig.rpcUrl || toConfig.chain.rpcUrls.default.http[0],
-            toConfig.chain.nativeCurrency || { name: "USDC", symbol: "USDC", decimals: 18 },
-            toConfig.chain.blockExplorers?.default?.url || ""
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
-
-        setSuccessMsg(`Submitting claim transaction on ${toConfig.chain.name}...`);
-        const claimProvider = await getEthereumProvider();
-        const destWallet = createWalletClient({
-          account: connectedAddress as `0x${string}`,
-          chain: toConfig.chain,
-          transport: custom(claimProvider)
-        });
-        const destPublic = createPublicClient({
-          chain: toConfig.chain,
-          transport: custom(claimProvider)
-        });
-
-        mintTx = await destWallet.writeContract({
-          address: toConfig.gatewayMinter,
-          abi: GATEWAY_MINTER_ABI,
-          functionName: "gatewayMint",
-          args: [attestation, circleSignature]
-        });
-
-        setSuccessMsg(`Claim submitted: ${mintTx.slice(0, 15)}... Waiting for receipt...`);
-        await destPublic.waitForTransactionReceipt({ hash: mintTx as `0x${string}` });
+        // Wait briefly for network switch to complete in MetaMask
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
+      // 6. Execute the gatewayMint contract write on destination chain via MetaMask
+      setSuccessMsg(`Submitting claim transaction on ${toConfig.chain.name}...`);
+      const claimProvider = await getEthereumProvider();
+      const destWallet = createWalletClient({
+        account: connectedAddress as `0x${string}`,
+        chain: toConfig.chain,
+        transport: custom(claimProvider)
+      });
+      const destPublic = createPublicClient({
+        chain: toConfig.chain,
+        transport: custom(claimProvider)
+      });
+
+      const mintTx = await destWallet.writeContract({
+        address: toConfig.gatewayMinter,
+        abi: GATEWAY_MINTER_ABI,
+        functionName: "gatewayMint",
+        args: [attestation, circleSignature]
+      });
+
+      setSuccessMsg(`Claim submitted: ${mintTx.slice(0, 15)}... Waiting for receipt...`);
+      await destPublic.waitForTransactionReceipt({ hash: mintTx });
+
+      // 7. Confirm withdrawal complete with the backend sidecar
       await fetch(`${BACKEND_URL}/api/withdraw/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1979,14 +1219,10 @@ export default function App() {
       });
 
       setSuccessMsg(`Withdrawal complete and claimed! Tx: ${mintTx.slice(0, 15)}...`);
-      setCircleStatus(activeCreatorWalletType === "circle" ? "Circle creator withdrawal complete." : circleStatus);
       fetchBackendStats();
     } catch (err: any) {
       console.error("Withdrawal error:", err);
       setErrorMsg(`Withdrawal failed: ${err.message || err.toString()}`);
-      if (activeCreatorWalletType === "circle") {
-        setCircleStatus("Circle creator withdrawal failed.");
-      }
     } finally {
       setIsWithdrawing(false);
     }
@@ -1994,8 +1230,8 @@ export default function App() {
 
   const handleRegisterCreator = async () => {
     if (isRegisteringCreator) return;
-    if (!activeCreatorAddress) {
-      setErrorMsg(activeCreatorWalletType === "circle" ? "Create or connect your Circle Wallet first." : "Please connect your MetaMask wallet first.");
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
       return;
     }
 
@@ -2007,7 +1243,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          address: activeCreatorAddress,
+          address: connectedAddress,
         }),
       });
       if (res.ok) {
@@ -2026,8 +1262,8 @@ export default function App() {
   };
 
   const handleGoLive = async () => {
-    if (!activeCreatorAddress) {
-      setErrorMsg(activeCreatorWalletType === "circle" ? "Create or connect your Circle Wallet first." : "Please connect your MetaMask wallet first.");
+    if (!connectedAddress) {
+      setErrorMsg("Please connect your MetaMask wallet first.");
       return;
     }
     if (!creatorNameInput.trim()) {
@@ -2085,7 +1321,7 @@ export default function App() {
       const regRes = await fetch(`${BACKEND_URL}/api/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: activeCreatorAddress }),
+        body: JSON.stringify({ address: connectedAddress }),
       });
       if (!regRes.ok) {
         const data = await regRes.json();
@@ -2097,7 +1333,7 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          address: activeCreatorAddress,
+          address: connectedAddress,
           name: targetName,
           streamUrl: targetStreamUrl,
           rate: billingRate,
@@ -2121,7 +1357,7 @@ export default function App() {
   };
 
   const handleStopLive = async () => {
-    if (!activeCreatorAddress) return;
+    if (!connectedAddress) return;
     setErrorMsg("");
     setSuccessMsg("");
     setIsRegisteringCreator(true);
@@ -2129,7 +1365,7 @@ export default function App() {
       const res = await fetch(`${BACKEND_URL}/api/streams/stop`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: activeCreatorAddress }),
+        body: JSON.stringify({ address: connectedAddress }),
       });
       if (res.ok) {
         setSuccessMsg("You have stopped your stream and gone offline.");
@@ -2169,9 +1405,8 @@ export default function App() {
     setSuccessMsg("");
     setIsFunding(true);
     
-    const target = activeViewerWallet?.address || connectedAddress || viewerAddress;
-    const label = activeViewerWallet?.type === "circle" ? "Circle Wallet" : activeViewerWallet?.type === "metamask" ? "MetaMask wallet" : "session wallet";
-    setSuccessMsg(`Please fund ${label}: ${target} using the Circle Faucet!`);
+    const target = connectedAddress || viewerAddress;
+    setSuccessMsg(`Please fund address: ${target} using the Circle Faucet!`);
     window.open("https://faucet.circle.com/", "_blank");
     setIsFunding(false);
   };
@@ -2510,7 +1745,7 @@ export default function App() {
             <article className="prose prose-invert">
               <h1 className="font-serif text-3xl text-gold-bright mb-2">1. How Viewers Join & Watch</h1>
               <p className="text-secondary text-sm leading-relaxed mb-6">
-                Viewers choose Circle Wallet or MetaMask, fund a local session gateway balance, and pay continuously for media content without repeated wallet popups during active streaming.
+                Viewers connect their web3 wallet, fund a local session gateway balance, and pay continuously for media content with zero MetaMask popups during active streaming.
               </p>
 
               <div className="space-y-6">
@@ -2519,8 +1754,7 @@ export default function App() {
                   <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1">
                     <li>Navigate to the CastPay portal and click <strong>Launch App</strong>.</li>
                     <li>Choose <strong>Viewer Portal</strong>.</li>
-                    <li>Choose <strong>Circle Wallet</strong> for embedded PIN approvals or <strong>MetaMask</strong> as the fallback wallet path.</li>
-                    <li>For MetaMask, the portal will prompt you to switch to the <strong>Arc Testnet</strong>. If the network is not in your wallet, MetaMask will automatically add it with your custom Canteen RPC.</li>
+                    <li>Connect your MetaMask wallet. The portal will prompt you to switch to the <strong>Arc Testnet</strong>. If the network is not in your wallet, MetaMask will automatically add it with your custom Canteen RPC.</li>
                   </ul>
                 </section>
 
@@ -2532,7 +1766,7 @@ export default function App() {
                   <ol className="text-xs text-secondary list-decimal list-inside mt-1.5 space-y-1">
                     <li>Click <strong>Deposit</strong>.</li>
                     <li>Input the amount of USDC you wish to allocate (e.g. <code>2.00</code> USDC).</li>
-                    <li>Approve the transaction via Circle Wallet or MetaMask. The flow performs ERC-20 approval when needed, then calls <code>depositFor</code> on the Circle Gateway contract.</li>
+                    <li>Approve the transaction via MetaMask (triggers ERC-20 approval and <code>depositFor</code> on the Circle Gateway contract).</li>
                   </ol>
                 </section>
 
@@ -2597,8 +1831,8 @@ export default function App() {
                   <h3 className="text-md font-medium text-gold-bright">Step 1: Creator Registration</h3>
                   <ul className="text-xs text-secondary list-disc list-inside mt-1.5 space-y-1">
                     <li>Click <strong>Launch App</strong> -&gt; <strong>Creator Console</strong>.</li>
-                    <li>Choose <strong>Circle Wallet</strong> or connect your <strong>MetaMask</strong> wallet.</li>
-                    <li>Register the selected wallet address as your creator payout profile in the active registry directory.</li>
+                    <li>Connect your MetaMask wallet.</li>
+                    <li>Register your payout address (registers your creator profile in the active registry directory).</li>
                   </ul>
                 </section>
 
@@ -2656,12 +1890,12 @@ export default function App() {
                     The creator dashboard displays real-time performance statistics (Gross Revenue, Platform Fees, Net Earnings). To withdraw funds to another chain (e.g., Base Sepolia):
                   </p>
                   <ol className="text-xs text-secondary list-decimal list-inside mt-1.5 space-y-1">
-                    <li>Input your destination wallet address, or leave it blank to use the selected creator wallet address.</li>
+                    <li>Input your destination wallet address.</li>
                     <li>Select the destination chain.</li>
                     <li>Click <strong>Withdraw</strong>.</li>
-                    <li>Approve two sequential <code>BurnIntent</code> EIP-712 messages in Circle Wallet or MetaMask (one for net earnings, and one for platform fee).</li>
-                    <li>The backend proxies the intents to Circle Gateway and returns the attestation payload once the withdrawal is ready to claim.</li>
-                    <li>The selected wallet path triggers the <code>gatewayMint</code> contract call on the destination chain and records the claim transaction.</li>
+                    <li>Sign two sequential <code>BurnIntent</code> EIP-712 messages in MetaMask (one for Net earnings, and one for Platform Fee).</li>
+                    <li>The backend proxies the intents to Circle Gateway, completes the burn on Arc L1, and returns the attestation payload.</li>
+                    <li>MetaMask switches to the destination chain and triggers the <code>gatewayMint</code> contract call to mint your USDC instantly.</li>
                   </ol>
                 </section>
               </div>
@@ -2680,18 +1914,18 @@ export default function App() {
                 <h3 className="text-sm font-semibold uppercase tracking-wider text-gold-accent mb-4">Interactive Protocol Flow</h3>
                 <div className="space-y-3">
                   {[
-                    { num: 1, from: "Viewer", to: "Browser", text: "Choose Circle Wallet or MetaMask and deposit USDC" },
+                    { num: 1, from: "Viewer", to: "Browser", text: "Connect MetaMask & Deposit USDC" },
                     { num: 2, from: "Browser", to: "Circle Gateway", text: "depositFor(SessionAddress, Amount) on-chain" },
                     { num: 3, from: "Browser", to: "Browser", text: "Local Session Key signs micro-billing payload popup-free" },
                     { num: 4, from: "Browser", to: "CastPay Backend", text: "POST /api/heartbeat with EIP-712 Payment Signature (every 2s)" },
                     { num: 5, from: "CastPay Backend", to: "CastPay Backend", text: "Verify signature against pre-authorized balance (approx. 10ms)" },
                     { num: 6, from: "CastPay Backend", to: "Browser", text: "Return 200 OK & serve gated HLS segments" },
                     { num: 7, from: "CastPay Backend", to: "Circle Gateway", text: "Settle batches asynchronously in the background" },
-                    { num: 8, from: "Creator", to: "CastPay Backend", text: "Request withdrawal by approving BurnIntents" },
+                    { num: 8, from: "Creator", to: "CastPay Backend", text: "Request withdrawal by signing BurnIntents" },
                     { num: 9, from: "CastPay Backend", to: "Circle Gateway", text: "Submit BurnIntents for verification & attestation" },
                     { num: 10, from: "Circle Gateway", to: "CastPay Backend", text: "Return Circle signature & bridge attestation" },
                     { num: 11, from: "CastPay Backend", to: "Creator", text: "Provide attestation & signature payload" },
-                    { num: 12, from: "Creator", to: "Circle Gateway", text: "Claim with gatewayMint to receive USDC" },
+                    { num: 12, from: "Creator", to: "Circle Gateway", text: "Switch chain & call gatewayMint to receive USDC" },
                   ].map((s) => (
                     <div key={s.num} className="flex gap-4 p-3 bg-[#14120f] border border-gold-muted/10 rounded-lg hover:border-gold-accent/40 transition-all items-center">
                       <div className="w-6 h-6 rounded bg-gold-accent text-[#0a0907] flex items-center justify-center font-bold text-xs shrink-0">
@@ -3511,31 +2745,8 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 mb-4">
-                  <button
-                    type="button"
-                    onClick={() => setActiveViewerWalletType("metamask")}
-                    className={activeViewerWalletType === "metamask" ? "btn-gold text-xs justify-center py-2" : "btn-outline text-xs justify-center py-2"}
-                  >
-                    MetaMask
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (circleWallet) {
-                        setActiveViewerWalletType("circle");
-                      } else {
-                        void handleContinueCircleWallet();
-                      }
-                    }}
-                    disabled={isCircleBusy}
-                    className={activeViewerWalletType === "circle" ? "btn-gold text-[11px] leading-tight justify-center py-2 min-h-10" : "btn-outline text-[11px] leading-tight justify-center py-2 min-h-10"}
-                  >
-                    {isCircleBusy ? "Setting up Circle..." : circleWallet ? "Circle Wallet" : "Continue with Circle Wallet"}
-                  </button>
-                </div>
-
-                {activeViewerWalletType === "metamask" && !connectedAddress && (
+                {/* MetaMask connection prompt if not connected */}
+                {!connectedAddress && (
                   <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 text-center mb-4">
                     <p className="text-xs text-amber-300 mb-3">Connect MetaMask to deposit USDC into the Gateway.</p>
                     <button onClick={connectWallet} className="btn-gold text-xs px-4 py-2 mx-auto flex items-center gap-2">
@@ -3545,50 +2756,14 @@ export default function App() {
                   </div>
                 )}
 
-                {activeViewerWalletType === "circle" && (
-                  <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 mb-4">
-                    <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Circle User ID</label>
-                    <input
-                      type="text"
-                      value={circleUserId}
-                      onChange={(e) => setCircleUserId(e.target.value)}
-                      className="input-field text-xs mb-3"
-                      placeholder="Auto-generated on first continue"
-                      disabled={isCircleBusy}
-                    />
-                    <button
-                      onClick={() => void handleContinueCircleWallet("viewer")}
-                      disabled={isCircleBusy || !CIRCLE_APP_ID}
-                      className="w-full btn-gold text-xs justify-center py-2.5"
-                    >
-                      {isCircleBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" />}
-                      {circleWallet ? "Refresh Circle Wallet" : "Continue with Circle Wallet"}
-                    </button>
-                    <p className="text-[10px] text-secondary mt-2 leading-relaxed">
-                      {circleStatus || "Circle Wallet uses PIN approval for wallet creation and deposits."}
-                      {circleSdkError ? ` ${circleSdkError}` : ""}
-                    </p>
-                  </div>
-                )}
-
                 {/* Balances Card */}
                 <div className="bg-[#0f0e0b] border border-gold-muted rounded-xl p-4 flex flex-col gap-4 mb-4">
-                  {activeViewerWalletType === "metamask" && connectedAddress && (
+                  {connectedAddress && (
                     <div>
                       <label className="text-[10px] uppercase font-semibold text-secondary block">MetaMask Wallet (Source)</label>
                       <div className="font-mono text-xs text-gold-bright truncate mt-1 bg-[#14120f] px-2.5 py-1.5 rounded border border-gold-muted/10">
                         {connectedAddress}
                       </div>
-                    </div>
-                  )}
-
-                  {activeViewerWalletType === "circle" && circleWallet && (
-                    <div>
-                      <label className="text-[10px] uppercase font-semibold text-secondary block">Circle Wallet (Source)</label>
-                      <div className="font-mono text-xs text-gold-bright truncate mt-1 bg-[#14120f] px-2.5 py-1.5 rounded border border-gold-muted/10">
-                        {circleWallet.address}
-                      </div>
-                      <div className="text-[10px] text-secondary mt-1">Balance: <strong className="text-gold-accent">{circleWalletBalance} USDC</strong></div>
                     </div>
                   )}
 
@@ -3616,7 +2791,7 @@ export default function App() {
                   onClick={handleFaucetFund}
                   className="w-full btn-outline text-xs justify-center mb-6 py-2.5"
                 >
-                  {activeViewerWalletType === "circle" ? "Fund Circle Wallet via Faucet" : "Fund MetaMask/Session via Faucet"}
+                  Fund MetaMask/Session via Faucet
                 </button>
 
                 {/* Deposit action */}
@@ -3644,7 +2819,7 @@ export default function App() {
                     </button>
                   </div>
                   <p className="text-[10px] text-secondary mt-1.5 leading-relaxed">
-                    {activeViewerWalletType === "circle" ? "Circle Wallet deposits USDC to the session wallet's Gateway balance after PIN approval." : "MetaMask deposits USDC directly to the session wallet's Gateway balance."} High-frequency micropayments are signed popup-free from the session key.
+                    MetaMask deposits USDC directly to the session wallet's Gateway balance. High-frequency micropayments are signed popup-free from the session key.
                   </p>
                 </div>
               </div>
@@ -3653,8 +2828,8 @@ export default function App() {
               <div className="glass-panel p-6 bg-[#0a0907]">
                 <h4 className="text-sm uppercase font-semibold text-gold-accent mb-2">Instructions</h4>
                 <ol className="text-xs text-secondary list-decimal list-inside space-y-2">
-                  <li>Choose Circle Wallet or MetaMask as the funding source.</li>
-                  <li>Fund the selected source address using the Circle Faucet button above.</li>
+                  <li>Connect MetaMask and switch to Arc Testnet.</li>
+                  <li>Fund your connected address using the Circle Faucet button above.</li>
                   <li>Deposit some USDC (e.g. 0.5 USDC) into the Circle Gateway.</li>
                   <li>Click "Pay & Watch" to stream the live Owncast video and verify live micropayments.</li>
                 </ol>
@@ -3782,33 +2957,34 @@ export default function App() {
                 </h3>
                 
                 <div className="flex flex-col gap-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveCreatorWalletType("metamask")}
-                      className={activeCreatorWalletType === "metamask" ? "btn-gold text-xs justify-center py-2" : "btn-outline text-xs justify-center py-2"}
-                    >
-                      MetaMask
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (circleWallet) {
-                          setActiveCreatorWalletType("circle");
-                        } else {
-                          void handleContinueCircleWallet("creator");
-                        }
-                      }}
-                      disabled={isCircleBusy}
-                      className={activeCreatorWalletType === "circle" ? "btn-gold text-[11px] leading-tight justify-center py-2 min-h-10" : "btn-outline text-[11px] leading-tight justify-center py-2 min-h-10"}
-                    >
-                      {isCircleBusy ? "Setting up Circle..." : circleWallet ? "Circle Wallet" : "Continue with Circle Wallet"}
-                    </button>
-                  </div>
-
-                  {activeCreatorWalletType === "metamask" && !connectedAddress && (
-                    <div className="text-center py-4 bg-amber-500/5 border border-amber-500/20 rounded-xl">
-                      <p className="text-xs text-secondary mb-3">Connect MetaMask to register as a creator.</p>
+                  {connectedAddress ? (
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Connected MetaMask Wallet</label>
+                      <div className="font-mono text-sm text-gold-bright truncate bg-[#0f0e0b] px-2.5 py-1.5 rounded border border-gold-muted/10">
+                        {connectedAddress}
+                      </div>
+                      
+                      <button
+                        onClick={handleRegisterCreator}
+                        disabled={isRegisteringCreator}
+                        className="w-full btn-gold text-xs justify-center py-2.5 mt-4"
+                      >
+                        {isRegisteringCreator ? (
+                          <>
+                            <RefreshCw className="w-4.5 h-4.5 animate-spin" />
+                            Registering...
+                          </>
+                        ) : (
+                          <>
+                            <UserCheck className="w-4.5 h-4.5" />
+                            Register Connected Wallet as Creator
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4">
+                      <p className="text-xs text-secondary mb-3">Please connect your MetaMask wallet to register as a Creator.</p>
                       <button
                         onClick={connectWallet}
                         className="btn-gold text-xs px-4 py-2 mx-auto flex items-center gap-2"
@@ -3818,64 +2994,6 @@ export default function App() {
                       </button>
                     </div>
                   )}
-
-                  {activeCreatorWalletType === "circle" && (
-                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
-                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">Circle User ID</label>
-                      <input
-                        type="text"
-                        value={circleUserId}
-                        onChange={(e) => setCircleUserId(e.target.value)}
-                        className="input-field text-xs mb-3"
-                        placeholder="Auto-generated on first continue"
-                        disabled={isCircleBusy}
-                      />
-                      <button
-                        onClick={() => void handleContinueCircleWallet("creator")}
-                        disabled={isCircleBusy || !CIRCLE_APP_ID}
-                        className="w-full btn-gold text-xs justify-center py-2.5"
-                      >
-                        {isCircleBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" />}
-                        {circleWallet ? "Refresh Circle Wallet" : "Continue with Circle Wallet"}
-                      </button>
-                      <p className="text-[10px] text-secondary mt-2 leading-relaxed">
-                        {circleStatus || "Circle Wallet can register creators, go live, and approve withdrawals."}
-                        {circleSdkError ? ` ${circleSdkError}` : ""}
-                      </p>
-                    </div>
-                  )}
-
-                  {activeCreatorAddress && (
-                    <div>
-                      <label className="text-[10px] uppercase font-semibold text-secondary block mb-1.5">
-                        {activeCreatorWalletType === "circle" ? "Circle Creator Wallet" : "Connected MetaMask Wallet"}
-                      </label>
-                      <div className="font-mono text-sm text-gold-bright truncate bg-[#0f0e0b] px-2.5 py-1.5 rounded border border-gold-muted/10">
-                        {activeCreatorAddress}
-                      </div>
-                      {activeCreatorWalletType === "circle" && circleWalletBalance && (
-                        <div className="text-[10px] text-secondary mt-1">Arc balance: <strong className="text-gold-accent">{circleWalletBalance} USDC</strong></div>
-                      )}
-                    </div>
-                  )}
-
-                  <button
-                    onClick={handleRegisterCreator}
-                    disabled={isRegisteringCreator || !activeCreatorAddress}
-                    className="w-full btn-gold text-xs justify-center py-2.5"
-                  >
-                    {isRegisteringCreator ? (
-                      <>
-                        <RefreshCw className="w-4.5 h-4.5 animate-spin" />
-                        Registering...
-                      </>
-                    ) : (
-                      <>
-                        <UserCheck className="w-4.5 h-4.5" />
-                        Register Selected Wallet as Creator
-                      </>
-                    )}
-                  </button>
                 </div>
               </div>
 
@@ -3900,7 +3018,7 @@ export default function App() {
                     </strong>
                   </div>
                   
-                  {activeCreatorAddress && parseFloat(creatorStats.gasBalance) < 0.005 && (
+                  {connectedAddress && parseFloat(creatorStats.gasBalance) < 0.005 && (
                     <div className="mt-2.5 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 leading-normal">
                       ⚠️ Low gas warning. Please fund your wallet.
                     </div>
@@ -3911,7 +3029,7 @@ export default function App() {
                       setSuccessMsg(`Please fund address: ${creatorStats.sellerAddress} using the Circle Faucet!`);
                       window.open("https://faucet.circle.com/", "_blank");
                     }}
-                    disabled={!activeCreatorAddress || !creatorStats.sellerAddress}
+                    disabled={!connectedAddress || !creatorStats.sellerAddress}
                     className="w-full btn-outline text-[10px] justify-center py-1.5 mt-2.5"
                     style={{ fontSize: '10px', padding: '6px 12px' }}
                   >
@@ -4071,7 +3189,7 @@ export default function App() {
 
                     <button
                       onClick={handleGoLive}
-                      disabled={isRegisteringCreator || !activeCreatorAddress}
+                      disabled={isRegisteringCreator || !connectedAddress}
                       className="w-full btn-gold text-xs justify-center py-2.5 mt-2"
                     >
                       {isRegisteringCreator ? (
@@ -4103,11 +3221,11 @@ export default function App() {
                       <span className="text-[10px] uppercase font-semibold text-secondary block mb-1">Shareable Stream Link:</span>
                       <div className="flex items-center gap-1.5">
                         <span className="font-mono text-[9px] text-gold-muted truncate flex-grow bg-[#0f0e0b] p-1.5 rounded border border-gold-muted/10">
-                          {`${window.location.origin}/?creator=${activeCreatorAddress}`}
+                          {`${window.location.origin}/?creator=${connectedAddress}`}
                         </span>
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(`${window.location.origin}/?creator=${activeCreatorAddress}`);
+                            navigator.clipboard.writeText(`${window.location.origin}/?creator=${connectedAddress}`);
                             setSuccessMsg("Copied shareable link to clipboard!");
                           }}
                           className="text-[9px] border border-gold-muted px-2 py-1.5 rounded hover:border-gold-accent text-gold-accent hover:text-gold-bright transition-all bg-[#0f0e0b]"
@@ -4159,16 +3277,6 @@ export default function App() {
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-secondary font-medium">USDC</span>
                     </div>
-                    <div className="flex items-center justify-between gap-2 mt-1.5 text-[10px] text-secondary">
-                      <span>Max now: {Math.max(parseFloat(creatorStats.gateway.available || "0") - (GATEWAY_WITHDRAW_MAX_FEE_USDC * GATEWAY_WITHDRAW_INTENT_COUNT), 0).toFixed(4)} USDC</span>
-                      <button
-                        type="button"
-                        onClick={() => setWithdrawAmount(Math.max(parseFloat(creatorStats.gateway.available || "0") - (GATEWAY_WITHDRAW_MAX_FEE_USDC * GATEWAY_WITHDRAW_INTENT_COUNT), 0).toFixed(4))}
-                        className="text-gold-accent hover:text-gold-bright"
-                      >
-                        Use max
-                      </button>
-                    </div>
                   </div>
 
                   <div>
@@ -4201,7 +3309,7 @@ export default function App() {
 
                   <button
                     onClick={handleWithdraw}
-                    disabled={isWithdrawing || !withdrawAmount || !activeCreatorAddress}
+                    disabled={isWithdrawing || !withdrawAmount || !connectedAddress}
                     className="w-full btn-gold text-xs justify-center py-2.5 mt-2"
                   >
                     {isWithdrawing ? (
@@ -4249,8 +3357,6 @@ export default function App() {
                             <span className="text-blue-400 text-[10px] font-medium bg-blue-400/5 px-2 py-0.5 rounded">Confirmed</span>
                           ) : w.status === "failed" ? (
                             <span className="text-red-400 text-[10px] font-medium bg-red-400/5 px-2 py-0.5 rounded">Failed</span>
-                          ) : w.status === "ready_to_claim" ? (
-                            <span className="text-amber-300 text-[10px] font-medium bg-amber-300/5 px-2 py-0.5 rounded">Ready to claim</span>
                           ) : (
                             <span className="text-secondary text-[10px] font-medium bg-secondary/5 px-2 py-0.5 rounded">Pending</span>
                           )}
