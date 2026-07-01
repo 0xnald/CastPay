@@ -4,8 +4,17 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 import * as path from "path";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, path.resolve(__dirname, "../../"), "");
+  const envDir = path.resolve(__dirname, "../../");
+  const env = loadEnv(mode, envDir, "");
+  const castpayEnv = {
+    RPC: process.env.RPC || env.RPC || "https://rpc.testnet.arc.network",
+    BACKEND_URL: process.env.BACKEND_URL || env.BACKEND_URL || "http://localhost:3001",
+    VITE_CIRCLE_APP_ID: process.env.VITE_CIRCLE_APP_ID || env.VITE_CIRCLE_APP_ID || "",
+    VITE_CIRCLE_ENVIRONMENT: process.env.VITE_CIRCLE_ENVIRONMENT || env.VITE_CIRCLE_ENVIRONMENT || "sandbox",
+  };
+
   return {
+    envDir,
     plugins: [
       react(),
       nodePolyfills({
@@ -18,8 +27,7 @@ export default defineConfig(({ mode }) => {
       }),
     ],
     define: {
-      "process.env.RPC": JSON.stringify(process.env.RPC || env.RPC || "https://rpc.testnet.arc.network"),
-      "process.env.BACKEND_URL": JSON.stringify(process.env.BACKEND_URL || env.BACKEND_URL || "http://localhost:3001"),
+      __CASTPAY_ENV__: JSON.stringify(castpayEnv),
     },
     server: {
       port: 3000,
